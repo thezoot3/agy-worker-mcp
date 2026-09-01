@@ -231,8 +231,50 @@ export function parsePayload(raw: string | null): GatePayload | null {
 }
 
 /** Write the decision to stdout as one line. The only place that writes stdout. */
+/**
+ * Captured before {@link guardStdout} neuters the public one, so this stays the
+ * only path to the real file descriptor.
+ */
+const realStdoutWrite: (chunk: string) => boolean = process.stdout.write.bind(process.stdout)
+
+let emitted = false
+
+/**
+ * Make stdout write-once and pollution-proof.
+ *
+ * Measured against agy 1.1.23: a hook that exits 0 but whose stdout does not
+ * parse is a DENIAL, not a passthrough —
+ *   failed to unmarshal result from hook ... via protojson: not json at all
+ * and this process always exits 0 (see `src/gate.ts`), so the
+ * `|| printf '{"decision":"ask"}'` fallback in `hooks.json` — which only fires
+ * on a non-zero exit — cannot cover it. One stray `console.log` from anywhere
+ * in the import graph would therefore deny every tool call in the workspace,
+ * including the user's own interactive agy sessions.
+ *
+ * So: everything except {@link emit} is swallowed, and only the first decision
+ * is written.
+ */
+export function guardStdout(): void {
+  process.stdout.write = ((
+    _chunk: unknown,
+    encoding?: unknown,
+    cb?: unknown,
+  ): boolean => {
+    const done = typeof encoding === 'function' ? encoding : cb
+    if (typeof done === 'function') (done as () => void)()
+    return true
+  }) as typeof process.stdout.write
+}
+
 export function emit(decision: GateDecision): void {
-  process.stdout.write(JSON.stringify(decision))
+  if (emitted) return
+  emitted = true
+  realStdoutWrite(JSON.stringify(decision))
+}
+
+/** Test seam: `emitted` is module state and every test needs a clean one. */
+export function resetEmitForTests(): void {
+  emitted = false
 }
 
 /** Append to `gate-log.jsonl`. Every verdict is recorded, allows included (§1.8). */

@@ -79,16 +79,16 @@ live('L8 — resuming a finished oneshot job keeps the conversation intact', () 
     recordUsage({ test: 'L8/2', job_id: second.job_id, model: LIVE_MODEL, events: secondEvents, wall_ms: Date.now() - t1 })
 
     const agent = replyJson(
-      await handleResult(ctx, { job_id: second.job_id, section: 'agent' } as never),
-    ) as { agent?: { response?: string; num_turns?: number } }
+      await handleResult(ctx, { job_id: second.job_id, section: 'agent_report' } as never),
+    ) as { agent_report?: { response?: string; num_turns?: number } }
     // eslint-disable-next-line no-console
-    console.log('[L8]', JSON.stringify({ outcome: waited.outcome, agent: agent.agent }))
+    console.log('[L8]', JSON.stringify({ outcome: waited.outcome, agent_report: agent.agent_report }))
 
     // The same conversation was resumed, not a new one started.
     expect(getSession(ctx.store, second.session_id)?.conversation_id).toBe(conversationAfterFirst)
     expect(second.session_id).toBe(first.session_id)
     // Lossless resume: turn 2 can only know this from turn 1's context.
-    expect((agent.agent?.response ?? '').toUpperCase()).toContain('TANGERINE')
+    expect((agent.agent_report?.response ?? '').toUpperCase()).toContain('TANGERINE')
 
     ctx.store.close()
   })
@@ -139,8 +139,8 @@ live('L9 — agy_send queues a turn onto a live session and num_turns advances',
     recordUsage({ test: 'L9', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
 
     const agent = replyJson(
-      await handleResult(ctx, { job_id: started.job_id, section: 'agent' } as never),
-    ) as { agent?: { num_turns?: number; response?: string } }
+      await handleResult(ctx, { job_id: started.job_id, section: 'agent_report' } as never),
+    ) as { agent_report?: { num_turns?: number; response?: string } }
     // eslint-disable-next-line no-console
     console.log(
       '[L9]',
@@ -148,7 +148,7 @@ live('L9 — agy_send queues a turn onto a live session and num_turns advances',
         lifecycle: waited.lifecycle,
         outcome: waited.outcome,
         result_events: events.filter((e) => e.event === 'result').length,
-        agent: agent.agent,
+        agent_report: agent.agent_report,
       }),
     )
 

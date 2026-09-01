@@ -76,8 +76,9 @@ live('L10 — a sandboxed network command: which signature does agy actually sur
     const events = readEvents(ctx, started.job_id)
     recordUsage({ test: 'L10', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
 
-    const full = replyJson(await handleResult(ctx, { job_id: started.job_id } as never)) as {
-      broker?: { outcome?: string; exit_code?: number | null; agent_status?: string | null }
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
+      broker_summary?: unknown
+      agent_status?: string | null
       verification?: { environment_blocks?: unknown[]; permission_denials?: unknown[] }
     }
     // eslint-disable-next-line no-console
@@ -86,7 +87,8 @@ live('L10 — a sandboxed network command: which signature does agy actually sur
       JSON.stringify(
         {
           outcome: waited.outcome,
-          broker: full.broker,
+          broker_summary: full.broker_summary,
+          agent_status: full.agent_status,
           environment_blocks: full.verification?.environment_blocks,
           permission_denials: full.verification?.permission_denials,
           known_signatures: ENVIRONMENT_BLOCK_SIGNATURES,
@@ -128,8 +130,9 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
     const events = readEvents(ctx, started.job_id)
     recordUsage({ test: 'L11', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
 
-    const full = replyJson(await handleResult(ctx, { job_id: started.job_id } as never)) as {
-      broker?: unknown
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
+      broker_summary?: unknown
+      agent_status?: string | null
       verification?: { environment_blocks?: unknown[]; permission_denials?: unknown[] }
     }
     // eslint-disable-next-line no-console
@@ -138,7 +141,8 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
       JSON.stringify(
         {
           outcome: waited.outcome,
-          broker: full.broker,
+          broker_summary: full.broker_summary,
+          agent_status: full.agent_status,
           environment_blocks: full.verification?.environment_blocks,
           permission_denials: full.verification?.permission_denials,
           steps: toolSteps(events),

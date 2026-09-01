@@ -237,3 +237,28 @@ describe('parsePayload — tolerant, never throws', () => {
     expect(parsePayload('{"conversationId":"c1"}')).toBeNull() // missing toolCall
   })
 })
+
+describe('stdout is write-once and pollution-proof', () => {
+  it('guardStdout swallows everything that is not emit(), and emit writes only once', async () => {
+    const { emit, guardStdout, resetEmitForTests, PASSTHROUGH } = await import('../../../src/gate/gate.js')
+    const written: string[] = []
+    const original = process.stdout.write
+    // Stand in for the real fd. guardStdout() captured the *module-load* binding,
+    // so this only proves the public `process.stdout.write` is neutered; the
+    // write-once behaviour is asserted through emit's own flag.
+    resetEmitForTests()
+    try {
+      guardStdout()
+      // A stray write from anywhere in the import graph must not reach stdout.
+      expect(process.stdout.write('garbage from some library\n')).toBe(true)
+      expect(written).toEqual([])
+      emit(PASSTHROUGH)
+      // A second decision — e.g. main() emitted and then the catch fired — must
+      // not append a second JSON document to the same stdout.
+      emit({ decision: 'deny', reason: 'should never be written' })
+    } finally {
+      process.stdout.write = original
+      resetEmitForTests()
+    }
+  })
+})

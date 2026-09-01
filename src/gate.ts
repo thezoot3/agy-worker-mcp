@@ -7,11 +7,15 @@
  * (docs/02 §9), and this process also runs for the user's own interactive agy
  * sessions whenever a conversation cannot be matched to one of our jobs.
  */
-import { PASSTHROUGH, main } from './gate/gate.js'
+import { PASSTHROUGH, emit, guardStdout, main } from './gate/gate.js'
+
+// Before anything else can print. A hook that exits 0 with unparseable stdout
+// is a denial (measured, `docs/02` §9), and this process always exits 0.
+guardStdout()
 
 main()
   .then((code) => process.exit(code))
   .catch(() => {
-    process.stdout.write(JSON.stringify(PASSTHROUGH))
+    emit(PASSTHROUGH)
     process.exit(0)
   })

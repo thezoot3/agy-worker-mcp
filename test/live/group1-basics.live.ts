@@ -78,10 +78,10 @@ live('L1 — oneshot smoke: the argv we build is accepted and the run completes'
     expect(init.conversation_id!.length).toBeGreaterThan(0)
 
     const full = replyJson(await handleResult(ctx, { job_id: started.job_id } as never)) as {
-      broker?: { outcome?: string; exit_code?: number | null }
+      broker_summary?: unknown
     }
     // eslint-disable-next-line no-console
-    console.log('[L1]', JSON.stringify({ outcome: waited.outcome, broker: full.broker }))
+    console.log('[L1]', JSON.stringify({ outcome: waited.outcome, broker_summary: full.broker_summary }))
     expect(waited.outcome).toBe('success_unverified')
 
     ctx.store.close()

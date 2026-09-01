@@ -7,7 +7,7 @@
  * `hooks.json` 을 직접 만드는 수밖에 없다.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -69,20 +69,41 @@ live('L4 — our gate binds a real agy conversation and its denial survives exit
     const events = readEvents(ctx, started.job_id)
     recordUsage({ test: 'L4', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
 
-    const full = replyJson(await handleResult(ctx, { job_id: started.job_id } as never)) as {
-      broker?: { outcome?: string; exit_code?: number | null; agent_status?: string | null }
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
+      broker_summary?: unknown
+      agent_status?: string | null
       verification?: { permission_denials?: unknown[] }
     }
     const session = getSession(ctx.store, started.session_id)
+    const { jobPaths } = await import('../../src/contract/paths.js')
+    const jp = jobPaths(ctx.paths, started.job_id)
+    const readOr = (p: string) => {
+      try {
+        return readFileSync(p, 'utf8')
+      } catch {
+        return '<absent>'
+      }
+    }
     // eslint-disable-next-line no-console
     console.log(
       '[L4]',
-      JSON.stringify({
-        outcome: waited.outcome,
-        broker: full.broker,
-        denials: full.verification?.permission_denials,
-        conversation_id: session?.conversation_id,
-      }),
+      JSON.stringify(
+        {
+          outcome: waited.outcome,
+            broker_summary: full.broker_summary,
+          agent_status: full.agent_status,
+          denials: full.verification?.permission_denials,
+          conversation_id: session?.conversation_id,
+          hooks_json: readOr(join(project.root, '.agents', 'hooks.json')),
+          gate_log: readOr(jp.gateLog).slice(0, 3000),
+          steps: events
+            .filter((e) => e.event === 'step_update')
+            .map((e) => e.step_update as Record<string, unknown>)
+            .map((s) => ({ t: s?.step_type, tool: s?.tool_name, state: s?.state, params: JSON.stringify(s?.tool_info ?? null).slice(0, 300) })),
+        },
+        null,
+        1,
+      ),
     )
 
     // The gate can only have denied if it bound the conversation, which is the
@@ -213,7 +234,7 @@ payload=$(cat)
 printf '%s\\n' "$payload" >> ${JSON.stringify(logPath)}
 if [ ! -f ${JSON.stringify(logPath + '.granted')} ]; then
   : > ${JSON.stringify(logPath + '.granted')}
-  printf '{"decision":"allow","permissionOverrides":{"command":["echo"]}}'
+  printf '{"decision":"allow","permissionOverrides":["command(echo)"]}'
 else
   printf '{"decision":"ask"}'
 fi
@@ -237,7 +258,17 @@ fi
     // eslint-disable-next-line no-console
     console.log(
       '[L7]',
-      JSON.stringify({ code, hook_invocations: calls, run_command_steps: steps.length, states: steps.map((s) => s?.state) }),
+      JSON.stringify(
+        {
+          code,
+          hook_invocations: calls,
+          run_command_steps: steps.length,
+          states: steps.map((s) => s?.state),
+          errors: steps.map((s) => (s?.tool_info as Record<string, unknown> | undefined)?.error ?? null),
+        },
+        null,
+        1,
+      ),
     )
     expect(events.length).toBeGreaterThan(0)
   })
