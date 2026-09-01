@@ -11,6 +11,7 @@ import {
   writeJsonAtomic,
 } from '../contract/paths.js'
 
+import { startIdleWatchdog, type IdleWatchdog } from './idle.js'
 import { startInboxRelay, type InboxRelay } from './inbox.js'
 import { killProcessGroup, sleep } from './reap.js'
 import { spawnAgyDetached } from './spawn.js'
@@ -91,10 +92,30 @@ export async function runJob(opts: RunJobOptions): Promise<RunJobResult> {
   })
 
   let relay: InboxRelay | null = null
+  let idleWatchdog: IdleWatchdog | null = null
+  let idleClosed = false
   if (stdinPipe && spawned.stdin) {
+    // Idle timeout only applies to session_mode:'session' (`idle_timeout_ms`
+    // is null otherwise, `docs/04` 미해결 질문 3). Created before the relay so
+    // `onUserLineSent` below always has something to call.
+    if (config.idle_timeout_ms != null) {
+      idleWatchdog = startIdleWatchdog({
+        eventsPath: paths.events,
+        idleTimeoutMs: config.idle_timeout_ms,
+        stdin: spawned.stdin,
+        onIdleClose: () => {
+          idleClosed = true
+        },
+      })
+    }
     relay = startInboxRelay({
       inboxPath: paths.inbox,
       stdin: spawned.stdin,
+      onUserLineSent: () => idleWatchdog?.noteActivity(),
+      // An explicit agy_send(close:true) ends the session on its own terms;
+      // stop the idle watchdog so it cannot also race to end an already-ended
+      // stdin.
+      onClose: () => idleWatchdog?.stop(),
     })
   }
 
@@ -140,6 +161,7 @@ export async function runJob(opts: RunJobOptions): Promise<RunJobResult> {
     }
   } finally {
     relay?.stop()
+    idleWatchdog?.stop()
   }
 
   const finishedAt = Date.now()
@@ -154,6 +176,7 @@ export async function runJob(opts: RunJobOptions): Promise<RunJobResult> {
     finished_at: finishedAt,
     updated_at: finishedAt,
     timed_out: timedOut,
+    idle_closed: idleClosed,
   })
 
   return {

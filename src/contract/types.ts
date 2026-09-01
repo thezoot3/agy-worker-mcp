@@ -496,6 +496,20 @@ export interface JobRequest {
   permissions?: RequestedPermissions
   on_denial?: OnDenial
   timeout_ms?: number
+  /**
+   * `session_mode: 'session'` only. Closes stdin (ending the process at EOF,
+   * §6) after this many idle ms following a *completed* turn with no new
+   * `agy_send` in between. Ignored for `oneshot`, which already closes stdin
+   * after its one turn.
+   *
+   * Deliberately separate from `timeout_ms`/`deadline_at`: `agy_send` never
+   * extends `deadline_at` (`docs/04` 미해결 질문 2 — see the comment on
+   * `EffectiveConfig.deadline_at` below), so this is the mechanism that lets a
+   * multi-turn session end promptly instead of idling out the full hard
+   * timeout (measured waste, `docs/05` §6.3: a session-mode job that finished
+   * its one turn sat until `--print-timeout` elapsed).
+   */
+  idle_timeout_ms?: number
   /** Workspace-relative paths that must exist when the job finishes. */
   expected_artifacts?: string[]
   /** Path or inline JSON schema for `--json-schema`. */
@@ -525,7 +539,31 @@ export interface EffectiveConfig {
   on_denial: OnDenial
   write_mode: boolean
   timeout_ms: number
+  /**
+   * Hard ceiling, set once from `timeout_ms` at `agy_start` and never touched
+   * again — `agy_send` does not extend it (`docs/04` 미해결 질문 2).
+   *
+   * Decision: a queued turn keeps the *original* deadline. Pushing it out on
+   * every `agy_send` would let an actively-fed session hold its `session` and
+   * `cwd_write` locks (`docs/01` 결정 4) indefinitely as long as something kept
+   * calling `agy_send` faster than it decayed — and because `reconcile` only
+   * runs from a tool entry point (결정 5), nothing else would ever notice and
+   * cut it off. A fixed ceiling is the backstop that guarantees a `session`
+   * job eventually reconciles even if a client behaves badly.
+   *
+   * The intended way to run longer than one `deadline_at` window is not to
+   * stretch it, but to let the job finish (or idle-close, see
+   * `idle_timeout_ms`) and resume the same conversation with a fresh
+   * `agy_start(session_id=...)` — resume is measured lossless (`docs/02` §6),
+   * so nothing is lost by not stretching this field.
+   */
   deadline_at: number
+  /**
+   * Resolved `idle_timeout_ms`, or `null` when `session_mode !== 'session'`
+   * (a oneshot job has no idle window — its one turn's `result` is followed
+   * immediately by stdin close). See `JobRequest.idle_timeout_ms`.
+   */
+  idle_timeout_ms: number | null
   expected_artifacts: string[]
   json_schema_path: string | null
   policy: EffectivePolicy
@@ -559,6 +597,21 @@ export interface JobStateFile {
    * Optional because a `state.json` written by an older build will not have it.
    */
   timed_out?: boolean
+  /**
+   * True when the runner's idle watchdog closed stdin because
+   * `idle_timeout_ms` elapsed with no `agy_send` after the last completed
+   * turn (`docs/04` 미해결 질문 3). Distinct from `timed_out`: this is a clean
+   * EOF close, not a `killpg` — the exit code it produces goes through the
+   * ordinary `finalizeJob` path exactly as an explicit `agy_send(close:true)`
+   * would, so it never forces `outcome`. Diagnostic only, so a caller can tell
+   * "the session idled itself shut" apart from "the client closed it" or "the
+   * process just exited on its own" after reading the exit code.
+   *
+   * Optional for the same reason as `timed_out`: an older `state.json` won't
+   * have it, and jobs that never had an idle watchdog (oneshot, or a
+   * `session` job the client closed itself) never set it either.
+   */
+  idle_closed?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -715,6 +768,18 @@ export interface Capabilities {
     max_running_jobs: number
     max_timeout_ms: number
     default_timeout_ms: number
+    /**
+     * `session_mode: 'session'` only (`docs/04` 미해결 질문 3). No live
+     * measurement dictates this value — there is no recorded turn-cadence
+     * data for how quickly a real caller re-sends after a turn finishes.
+     * Chosen to comfortably outlast one round trip of "read the last turn,
+     * decide the next prompt" without idling out a hard `timeout_ms`
+     * (typically minutes) just to wait on a client that already went quiet.
+     * Revisit if live use shows a different cadence.
+     */
+    default_idle_timeout_ms: number
+    /** Ceiling `idle_timeout_ms` is clamped to, mirroring `max_timeout_ms`. */
+    max_idle_timeout_ms: number
     max_response_bytes: number
     max_log_tail_lines: number
   }

@@ -65,6 +65,10 @@ export const DEFAULT_LIMITS: Capabilities['limits'] = {
   max_running_jobs: 3,
   max_timeout_ms: 60 * 60 * 1000,
   default_timeout_ms: 15 * 60 * 1000,
+  // `docs/04` 미해결 질문 3 — see the comment on `Capabilities['limits']` for why
+  // this value is a judgment call, not a measurement.
+  default_idle_timeout_ms: 2 * 60 * 1000,
+  max_idle_timeout_ms: 60 * 60 * 1000,
   max_response_bytes: 32_000,
   max_log_tail_lines: 30,
 }

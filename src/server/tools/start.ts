@@ -75,6 +75,14 @@ export const startInput = z.object({
     .optional()
     .describe('What to do on the first policy denial. Default continue.'),
   timeout_ms: z.number().int().positive().optional(),
+  idle_timeout_ms: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      'session_mode "session" only. Closes stdin (ending the process) after this many ms of no agy_send following the last completed turn. Does not affect timeout_ms/deadline_at — agy_send never extends those. Ignored for oneshot.',
+    ),
   expected_artifacts: z
     .array(z.string())
     .optional()
@@ -190,6 +198,14 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
     const onDenial = input.on_denial ?? 'continue'
     const sessionMode = input.session_mode ?? 'oneshot'
     const timeoutMs = clamp(input.timeout_ms ?? ctx.limits.default_timeout_ms, 1, ctx.limits.max_timeout_ms)
+    // Only meaningful for session_mode:'session' (`docs/04` 미해결 질문 3, see
+    // EffectiveConfig.idle_timeout_ms). null for oneshot — its one turn is
+    // already followed by an immediate stdin close, so there is no idle gap
+    // to bound.
+    const idleTimeoutMs =
+      sessionMode === 'session'
+        ? clamp(input.idle_timeout_ms ?? ctx.limits.default_idle_timeout_ms, 1, ctx.limits.max_idle_timeout_ms)
+        : null
     // `--json-schema <path>` hands agy an arbitrary file to read; without
     // containment a client could point it outside the workspace (finding 18).
     const jsonSchemaPath = input.json_schema
@@ -245,6 +261,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       write_mode: profileDef.write,
       timeout_ms: timeoutMs,
       deadline_at: deadlineAt,
+      idle_timeout_ms: idleTimeoutMs,
       expected_artifacts: expectedArtifacts,
       json_schema_path: jsonSchemaPath,
       policy,
@@ -327,6 +344,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       cwd,
       session_mode: sessionMode,
       deadline_at: deadlineAt,
+      idle_timeout_ms: idleTimeoutMs,
       dry_run: false,
     })
   } catch (e) {

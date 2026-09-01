@@ -143,8 +143,12 @@ export function recordUsage(row: {
   events: Array<Record<string, unknown>>
   wall_ms: number
 }): void {
-  const results = row.events.filter((e) => e.type === 'result')
-  const usage = results.map((r) => (r as { usage?: unknown }).usage ?? null)
+  // agy's stream-json events carry the discriminator on `event`, not `type`
+  // (docs/02 §4) — this used to read `e.type`, which is never set on a real
+  // agy event, so `turns`/`usage` silently stayed 0/[] for every row ever
+  // written here (including every prior live run's `.usage.jsonl`).
+  const results = row.events.filter((e) => e.event === 'result')
+  const usage = results.map((r) => (r as { result?: { usage?: unknown } }).result?.usage ?? null)
   mkdirSync(dirname(USAGE_LOG), { recursive: true })
   appendFileSync(
     USAGE_LOG,

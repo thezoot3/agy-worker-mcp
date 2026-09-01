@@ -144,7 +144,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
   )
   register(
     'agy_wait',
-    'Long-poll a job until it changes state or finishes (200ms internal polling; wait_ms=0 for an immediate snapshot). Returns the judgement packet only, not full logs or the response text.',
+    'Long-poll a job until it FINISHES or wait_ms runs out — it does not return early on intermediate transitions like queued->running (200ms internal polling; wait_ms=0 for an immediate snapshot). A short wait_ms is a poll interval, not a change notification: each call blocks for the whole budget unless the job finished. Returns the judgement packet only, not full logs or the response text.',
     waitInput.shape,
     handleWait,
   )

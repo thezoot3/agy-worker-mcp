@@ -43,18 +43,21 @@ npm install
 npm run build
 ```
 
+This package is not published to npm, so register it by absolute path to the
+built `dist/server.js` (substitute your own clone path).
+
+Claude Code — project-local, which is easy to undo and affects nothing else:
+
+```bash
+claude mcp add agy --scope project -- node /abs/path/to/agy-worker-mcp/dist/server.js
+```
+
 Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.agy]
-command = "npx"
-args = ["-y", "agy-worker-mcp"]
-```
-
-Claude Code:
-
-```bash
-claude mcp add agy -- npx -y agy-worker-mcp
+command = "node"
+args = ["/abs/path/to/agy-worker-mcp/dist/server.js"]
 ```
 
 The server discovers the project root by walking up from its `cwd` to a git
@@ -71,7 +74,7 @@ tool list — this is the map:
 | Tool | Role |
 | --- | --- |
 | `agy_start` | Start a job, return `job_id` immediately. `dry_run: true` resolves policy and argv without spending quota. |
-| `agy_wait` | Long-poll to the next state change or completion (`wait_ms: 0` = snapshot). Returns a compact judgement packet, not full logs. |
+| `agy_wait` | Long-poll until the job **finishes** or `wait_ms` runs out — it does not return early on `queued`→`running` (`wait_ms: 0` = snapshot). Returns a compact judgement packet, not full logs. |
 | `agy_result` | Full, paged result: broker verdict, `agent_report`, `verification` (denials, environment blocks, artifacts). |
 | `agy_logs` | Raw or normalized event stream, by byte cursor or tail. The only way a client that did not start a job can see what it is doing. |
 | `agy_send` | Queue a follow-up turn on a `session_mode: "session"` job. Queues only — cannot interrupt a running turn. |
@@ -107,6 +110,14 @@ Two profiles ship in the MVP:
   `pytest`, network opt-in. `git push`, package installs, `rm`, and `sudo`
   are hard-denied regardless of what a client requests.
 
+⚠ **`general_worker` is not a trust boundary.** Its `default_decision` is `ask`,
+which delegates to `agy`'s built-in engine, and that engine auto-approves under
+`proceed-in-sandbox` — so any shell command not on a deny list runs, and an
+allowed interpreter can write anywhere (`python3 -c "open('/tmp/x','w')"`).
+Shell redirection out of the workspace *is* blocked by the gate, and `agy`'s own
+`--sandbox` does **not** confine writes (measured — `docs/02` §4-c). Run
+untrusted prompts under `research_readonly`.
+
 A client's `permissions.allow` can only narrow a profile's ceiling, never
 widen it — a request outside the ceiling comes back in the job's
 `rejected_allow` rather than silently failing. `permissions.deny` always
@@ -120,6 +131,17 @@ npm test            # vitest run, against test/fake-agy — never the real agy b
 npm run build       # emits dist/server.js, dist/runner.js, dist/gate.js
 ```
 
-Tests run exclusively against the scripted fake in [`test/fake-agy/`](./test/fake-agy);
-the real `agy` CLI is never invoked by the test suite or by CI, since every
-invocation spends real quota.
+`npm test` runs exclusively against the scripted fake in
+[`test/fake-agy/`](./test/fake-agy); the real `agy` CLI is never invoked by it or
+by CI, since every invocation spends real quota.
+
+The real binary is exercised only by the separate live suite, which is opt-in
+twice over — its files are `*.live.ts` (the default config only collects
+`*.test.ts`) and every test skips without `AGY_LIVE=1`:
+
+```bash
+npm run test:live   # spends real agy quota
+```
+
+What it verifies, and which design assumptions it has already overturned, is in
+[`docs/05-live-verification.md`](./docs/05-live-verification.md).

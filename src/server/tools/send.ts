@@ -15,6 +15,16 @@ import { errorReply, reply, type ToolContext, type ToolReply } from '../context.
  *
  * ⚠ Queued turns only queue. agy finishes the in-flight turn first and there is no
  * way to interrupt or redirect it in print mode (§7).
+ *
+ * ⚠ Does **not** touch `deadline_at` (`docs/04` 미해결 질문 2, decided). The job's
+ * hard deadline is fixed once at `agy_start` from `timeout_ms` and this handler
+ * never patches it — see the comment on `EffectiveConfig.deadline_at` for why
+ * (short version: an ever-pushed-out deadline lets an actively-fed session hold
+ * its locks indefinitely, and nothing else would notice since `reconcile` only
+ * runs from a tool entry point). Use `idle_timeout_ms` (`agy_start`) if the goal
+ * is "end this session promptly once nobody is sending more turns" — that is a
+ * different axis (idle vs. total wall-clock) and is enforced by the runner
+ * itself, not by anything `agy_send` does here.
  */
 export const sendInput = z.object({
   job_id: z.string(),

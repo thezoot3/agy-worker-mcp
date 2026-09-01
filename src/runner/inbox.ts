@@ -98,6 +98,12 @@ export interface InboxRelayOptions {
   pollMs?: number
   /** Fired after the close directive has been relayed and stdin ended. */
   onClose?: () => void
+  /**
+   * Fired each time a user line is actually written to stdin. The idle
+   * watchdog (`docs/04` 미해결 질문 3) hooks this to know a turn just went "in
+   * flight", so it never arms its deadline mid-turn.
+   */
+  onUserLineSent?: () => void
 }
 
 export interface InboxRelay {
@@ -141,6 +147,7 @@ export function startInboxRelay(opts: InboxRelayOptions): InboxRelay {
 
       try {
         opts.stdin.write(JSON.stringify(line) + '\n')
+        opts.onUserLineSent?.()
       } catch {
         // agy's stdin is gone (process likely exited); stop relaying rather than
         // throwing out of a timer callback.
