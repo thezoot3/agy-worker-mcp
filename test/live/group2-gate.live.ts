@@ -174,11 +174,14 @@ const PROBE_PROMPT = 'Run the shell command: echo hello-from-agy'
 live('L6 — what agy does when a PreToolUse hook fails (A3)', () => {
   it('a hook that exits non-zero with no stdout', () => {
     const { code, events, stderr } = runAgyWithHook(project.root, '#!/bin/sh\nexit 1\n', PROBE_PROMPT)
-    const steps = events.filter((e) => e.type === 'step_update')
+    const steps = events.filter((e) => e.event === 'step_update').map((e) => e.step_update)
     // eslint-disable-next-line no-console
     console.log(
       '[L6a non-zero exit]',
-      JSON.stringify({ code, stderr, steps: steps.map((s) => ({ state: s.state, tool: s.tool_name, info: s.tool_info })) }, null, 1).slice(0, 2500),
+      JSON.stringify({ code, stderr, steps: steps.map((s) => {
+            const u = s as Record<string, unknown>
+            return { state: u?.state, tool: u?.tool_name, info: u?.tool_info }
+          }) }, null, 1).slice(0, 2500),
     )
     // Observational: the assertion is only that agy ran at all. What it decided
     // is the finding, and it goes into docs/02.
@@ -187,11 +190,14 @@ live('L6 — what agy does when a PreToolUse hook fails (A3)', () => {
 
   it('a hook that exits 0 but prints something that is not JSON', () => {
     const { code, events, stderr } = runAgyWithHook(project.root, "#!/bin/sh\nprintf 'not json at all'\n", PROBE_PROMPT)
-    const steps = events.filter((e) => e.type === 'step_update')
+    const steps = events.filter((e) => e.event === 'step_update').map((e) => e.step_update)
     // eslint-disable-next-line no-console
     console.log(
       '[L6b non-JSON stdout]',
-      JSON.stringify({ code, stderr, steps: steps.map((s) => ({ state: s.state, tool: s.tool_name, info: s.tool_info })) }, null, 1).slice(0, 2500),
+      JSON.stringify({ code, stderr, steps: steps.map((s) => {
+            const u = s as Record<string, unknown>
+            return { state: u?.state, tool: u?.tool_name, info: u?.tool_info }
+          }) }, null, 1).slice(0, 2500),
     )
     expect(events.length).toBeGreaterThan(0)
   })
@@ -224,11 +230,14 @@ fi
     } catch {
       calls = 0
     }
-    const steps = events.filter((e) => e.type === 'step_update' && e.tool_name === 'run_command')
+    const steps = events
+      .filter((e) => e.event === 'step_update')
+      .map((e) => e.step_update as Record<string, unknown>)
+      .filter((s) => s?.tool_name === 'run_command')
     // eslint-disable-next-line no-console
     console.log(
       '[L7]',
-      JSON.stringify({ code, hook_invocations: calls, run_command_steps: steps.length, states: steps.map((s) => s.state) }),
+      JSON.stringify({ code, hook_invocations: calls, run_command_steps: steps.length, states: steps.map((s) => s?.state) }),
     )
     expect(events.length).toBeGreaterThan(0)
   })

@@ -17,6 +17,7 @@ import {
 import type { EffectiveConfig, JobRequest } from '../../contract/types.js'
 import { cleanupOldJobs, reconcile } from '../../broker/reconcile.js'
 import { getProfile, resolvePolicy } from '../../policy/profiles.js'
+import { appendUserTurn } from '../../runner/inbox.js'
 import { buildAgyArgv, buildChildEnv, resolveAgyBin } from '../../runner/spawn.js'
 import { acquireJobLocks } from '../../store/locks.js'
 import { createJob, listJobs, LIVE_LIFECYCLES } from '../../store/jobs.js'
@@ -207,19 +208,18 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
     const now = Date.now()
     const deadlineAt = now + timeoutMs
 
-    // ⚠ Whether `--input-format stream-json` may coexist with `--print=<prompt>`
-    // for turn 1 of a session-mode job is not in `docs/02` — only the two forms in
-    // isolation are measured (§2). This composes them; flagged as a
-    // blocker/assumption for verification against real agy.
+    // Session mode takes its prompts from stdin, so turn 1 is seeded into the
+    // inbox below rather than passed on the command line (agy refuses both).
+    const streamInput = sessionMode === 'session'
     const argv = buildAgyArgv({
-      prompt: input.prompt,
+      prompt: streamInput ? '' : input.prompt,
       addDir: cwd,
       model: input.model ?? null,
       effort: input.effort ?? null,
       mode: input.mode ?? null,
       sandbox: true,
       conversationId,
-      inputFormat: sessionMode === 'session' ? 'stream-json' : null,
+      inputFormat: streamInput ? 'stream-json' : null,
       outputFormat: 'stream-json',
       printTimeoutMs: timeoutMs,
       jsonSchemaPath,
@@ -298,6 +298,13 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
     writeJsonAtomic(paths.request, request)
     writeJsonAtomic(paths.effectiveConfig, effectiveConfig)
     writeJsonAtomic(paths.policy, policy)
+
+    // Turn 1 of a session-mode job. The runner's inbox relay writes it to agy's
+    // stdin as soon as the process is up; `agy_send` appends later turns to the
+    // same file. Written before the spawn so the relay can never miss it.
+    if (streamInput && input.prompt !== '') {
+      appendUserTurn(paths.inbox, input.prompt)
+    }
 
     ensureGateHooks(cwd)
 

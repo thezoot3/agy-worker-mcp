@@ -55,6 +55,20 @@ export function buildAgyArgv(input: AgyArgvInput): string[] {
   if (typeof input.prompt !== 'string') {
     throw new ValidationError({ field: 'prompt', value: input.prompt, expected: 'a string (may be empty)' })
   }
+  // Measured against agy 1.1.23: the two are mutually exclusive, and agy says so
+  // itself rather than silently ignoring one —
+  //   Error: --input-format stream-json reads prompts from stdin, so a prompt
+  //   given on the command line would be ignored
+  // `docs/02` §2 already records the working shape (`--print=''` plus stdin);
+  // this makes it impossible to build the combination that fails.
+  if (input.inputFormat === 'stream-json' && input.prompt !== '') {
+    throw new ValidationError({
+      field: 'prompt',
+      value: input.prompt,
+      expected:
+        'an empty string when inputFormat is stream-json — agy rejects a command-line prompt there; queue the turn on stdin instead (docs/02 §2, §5)',
+    })
+  }
 
   const argv: string[] = []
   argv.push(`--print=${input.prompt}`)

@@ -147,13 +147,13 @@ live('L9 — agy_send queues a turn onto a live session and num_turns advances',
       JSON.stringify({
         lifecycle: waited.lifecycle,
         outcome: waited.outcome,
-        result_events: events.filter((e) => e.type === 'result').length,
+        result_events: events.filter((e) => e.event === 'result').length,
         agent: agent.agent,
       }),
     )
 
     expect(waited.lifecycle).toBe('finished')
-    expect(events.filter((e) => e.type === 'result').length).toBeGreaterThanOrEqual(2)
+    expect(events.filter((e) => e.event === 'result').length).toBeGreaterThanOrEqual(2)
 
     ctx.store.close()
   })

@@ -598,6 +598,19 @@ function turnTextFrom(ctx, line) {
 
 function main(argv) {
   const opts = parseArgv(argv)
+
+  // Measured against agy 1.1.23 (docs/02 §2): a command-line prompt and
+  // stream-json input are mutually exclusive, and agy refuses the combination
+  // outright rather than ignoring one of them. The fake used to ignore
+  // `--print` here, which quietly agreed with an assumption the real binary
+  // rejects — the one class of fake behaviour that is worse than none.
+  if (opts.inputFormat === 'stream-json' && opts.prompt) {
+    process.stderr.write(
+      'Error: --input-format stream-json reads prompts from stdin, so a prompt given on the command line would be ignored\n',
+    )
+    process.exit(2)
+  }
+
   const scenario = loadScenario()
 
   const conversationId = opts.conversation ?? randomUUID()
@@ -631,6 +644,7 @@ function main(argv) {
   })
 
   const turns = scenario.turns ?? []
+
   const turnAt = (i) => turns[Math.min(i, turns.length - 1)] ?? { steps: [], response: '' }
 
   if (opts.inputFormat === 'stream-json') {

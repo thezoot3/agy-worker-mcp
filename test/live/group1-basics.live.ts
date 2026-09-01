@@ -72,8 +72,8 @@ live('L1 — oneshot smoke: the argv we build is accepted and the run completes'
 
     // The first line is `init` and it is where conversation_id comes from
     // (docs/02 §4) — the gate's whole binding strategy rests on this.
-    const init = events[0] as { type?: string; conversation_id?: string }
-    expect(init.type).toBe('init')
+    const init = events[0] as { event?: string; conversation_id?: string }
+    expect(init.event).toBe('init')
     expect(typeof init.conversation_id).toBe('string')
     expect(init.conversation_id!.length).toBeGreaterThan(0)
 
@@ -187,11 +187,11 @@ live('L3 — session mode turn 1: --print=<prompt> coexists with --input-format 
       JSON.stringify({
         lifecycle: waited.lifecycle,
         outcome: waited.outcome,
-        event_types: events.map((e) => e.type),
+        event_types: events.map((e) => e.event),
       }),
     )
     expect(events.length).toBeGreaterThan(0)
-    expect((events[0] as { type?: string }).type).toBe('init')
+    expect((events[0] as { event?: string }).event).toBe('init')
     expect(waited.lifecycle).toBe('finished')
 
     ctx.store.close()

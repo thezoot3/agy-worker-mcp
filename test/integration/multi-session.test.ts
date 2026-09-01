@@ -133,32 +133,23 @@ describe('#7 — agy_send queues a follow-up turn that runs after the in-flight 
 
     const ctx = createContext()
 
-    // ⚠ session_mode:'session' jobs always emit `--print=<prompt>` *and*
-    // `--input-format stream-json` together (`start.ts`'s own comment already
-    // flags this combination as unmeasured against real agy — docs/02 only
-    // ever shows stream-json input paired with an *empty* --print=''). The
-    // fake binary's documented, docs-consistent behaviour is to ignore
-    // --print entirely once stream-json input is requested and wait on stdin
-    // (see test/fake-agy/agy.mjs main()), so `prompt` below never becomes a
-    // turn by itself — the first real turn has to arrive over agy_send too,
-    // exactly like every later one. That is what this test actually queues.
+    // Session-mode turn 1 travels over stdin, not the command line: agy refuses
+    // `--print=<prompt>` together with `--input-format stream-json` (measured,
+    // docs/02 §2), so `agy_start` seeds the prompt into `inbox.jsonl` and the
+    // runner's relay writes it in. So `prompt` here IS turn 1, and agy_send
+    // adds turn 2 — two turns total.
     const started = replyJson(
       await handleStart(ctx, {
-        prompt: '',
+        prompt: 'first turn',
         profile: 'research_readonly',
         session_mode: 'session',
         timeout_ms: 20_000,
       } as never),
     ) as { job_id: string }
 
-    const sentFirst = replyJson(
-      await handleSend(ctx, { job_id: started.job_id, text: 'first turn' } as never),
-    ) as { queued: boolean }
-    expect(sentFirst.queued).toBe(true)
-
-    // Queue the second turn shortly after; docs/02 §7 says it only takes
-    // effect once the in-flight turn finishes (no interrupt path in print
-    // mode) — this is the actual property #7 is about.
+    // Queue the second turn shortly after turn 1 is in flight; docs/02 §7 says
+    // it only takes effect once the in-flight turn finishes (no interrupt path
+    // in print mode) — this is the actual property #7 is about.
     await sleep(300)
     const sent = replyJson(
       await handleSend(ctx, { job_id: started.job_id, text: 'second turn', close: true } as never),

@@ -54,13 +54,28 @@ describe('buildAgyArgv — --add-dir is always present', () => {
   })
 })
 
+describe('buildAgyArgv — stream-json input and a command-line prompt are exclusive', () => {
+  it('rejects a non-empty prompt when inputFormat is stream-json', () => {
+    // agy 1.1.23 refuses this itself: "--input-format stream-json reads prompts
+    // from stdin, so a prompt given on the command line would be ignored"
+    // (docs/02 §2). Building it is a bug, so it cannot be built.
+    expect(() => buildAgyArgv(baseInput({ inputFormat: 'stream-json', prompt: 'hi' }))).toThrow(ValidationError)
+  })
+
+  it('accepts the empty prompt that pairs with stdin turns', () => {
+    const argv = buildAgyArgv(baseInput({ inputFormat: 'stream-json', prompt: '' }))
+    expect(argv[0]).toBe('--print=')
+    expect(argv).toContain('--input-format')
+  })
+})
+
 describe('buildAgyArgv — forbidden flags never appear', () => {
   it('the built argv never contains any FORBIDDEN_AGY_FLAGS entry, across option combinations', () => {
     const variants: Partial<AgyArgvInput>[] = [
       {},
       { model: 'gemini-3.7-flash-low', effort: 'high', mode: 'accept-edits' },
       { conversationId: 'conv-123' },
-      { inputFormat: 'stream-json' },
+      { inputFormat: 'stream-json', prompt: '' }, // stream-json input forbids a command-line prompt
       { jsonSchemaPath: '/abs/schema.json' },
       { prompt: '--continue please' }, // even inside the prompt text this is one token
     ]

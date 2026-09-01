@@ -39,11 +39,13 @@ beforeEach(() => {
 /** Compact view of every tool step, which is where both classes show up. */
 function toolSteps(events: Array<Record<string, unknown>>): unknown[] {
   return events
-    .filter((e) => e.type === 'step_update')
-    .map((e) => ({
-      tool: e.tool_name,
-      state: e.state,
-      info: JSON.stringify(e.tool_info ?? null).slice(0, 600),
+    .filter((e) => e.event === 'step_update')
+    .map((e) => e.step_update as Record<string, unknown> | undefined)
+    .map((s) => ({
+      tool: s?.tool_name,
+      state: s?.state,
+      step_type: s?.step_type,
+      info: JSON.stringify(s?.tool_info ?? null).slice(0, 600),
     }))
 }
 
