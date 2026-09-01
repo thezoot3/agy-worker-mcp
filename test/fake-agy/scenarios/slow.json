@@ -1,0 +1,31 @@
+{
+  "name": "slow",
+  "description": "A long-running turn (delay_ms before and after the tool call), for tests that need a job to still be 'running' when they check on it: lock conflicts, agy_wait polling with a real state change, cancel, and timeout.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.2, "delay_ms": 400 },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "sleep 1 && echo slow-done" },
+          "tool_action": "Sleeping",
+          "tool_summary": "Simulate slow work",
+          "output": "slow-done\n",
+          "duration_seconds": 1.0,
+          "delay_ms": 1500
+        },
+        {
+          "type": "agent_response",
+          "chunks": ["Finished the slow task."],
+          "duration_seconds": 0.2,
+          "delay_ms": 400
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "Finished the slow task.",
+      "duration_seconds": 2.3
+    }
+  ]
+}

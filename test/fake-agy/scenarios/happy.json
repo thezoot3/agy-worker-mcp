@@ -1,0 +1,38 @@
+{
+  "name": "happy",
+  "description": "Clean single turn with one allowed run_command. Mirrors .spike/out/run1.events.ndjson step for step.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        {
+          "type": "agent_response",
+          "chunks": [],
+          "duration_seconds": 1.295238,
+          "usage": [16015, 80]
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "python3 -c \"print(41+1)\"" },
+          "tool_action": "Running python calculation",
+          "tool_summary": "Compute 41+1",
+          "output": "42\n",
+          "duration_seconds": 0.062982
+        },
+        {
+          "type": "agent_response",
+          "chunks": [
+            "The command `python3 -c \"print(41+1)\"` produced the",
+            " following stdout:\n\n```\n42\n```\n"
+          ],
+          "duration_seconds": 1.416846,
+          "usage": [16183, 28]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "The command `python3 -c \"print(41+1)\"` produced the following stdout:\n\n```\n42\n```\n",
+      "duration_seconds": 2.811859
+    }
+  ]
+}

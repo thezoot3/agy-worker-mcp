@@ -1,0 +1,53 @@
+{
+  "name": "denial-then-workaround",
+  "description": "Three tool calls: an allowed one, one that the real gate.js denies against the general_worker profile's own deny list (command(pip install)), and a third allowed 'workaround' command. Unlike hook-denied, this scenario is meant to be run WITHOUT a hand-installed test gate.sh — the real src/gate/gate.ts is what denies step 2, driven by policy.json written by handleStart. Exercises docs/02 §10's measured agy behaviour (denied, then tries something else, then reports).",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.8, "usage": [16000, 50] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "git status" },
+          "tool_action": "Checking repo status",
+          "tool_summary": "git status",
+          "output": "On branch main\nnothing to commit, working tree clean\n",
+          "duration_seconds": 0.08
+        },
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.7, "usage": [16050, 40] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "pip install requests" },
+          "tool_action": "Installing a dependency",
+          "tool_summary": "pip install requests",
+          "output": "",
+          "duration_seconds": 0.06
+        },
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.7, "usage": [16090, 45] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "python -m pytest" },
+          "tool_action": "Running tests with what's already vendored",
+          "tool_summary": "python -m pytest",
+          "output": "collected 0 items\n\nno tests ran\n",
+          "duration_seconds": 0.15
+        },
+        {
+          "type": "agent_response",
+          "chunks": [
+            "Dependency installation was blocked by policy, so I ran the test suite with what was already available instead."
+          ],
+          "duration_seconds": 1.2,
+          "usage": [16200, 90]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "Dependency installation was blocked by policy, so I ran the test suite with what was already available instead.",
+      "response_if_denied": "Dependency installation was blocked by policy, so I ran the test suite with what was already available instead.",
+      "duration_seconds": 3.7
+    }
+  ]
+}

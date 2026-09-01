@@ -1,0 +1,45 @@
+{
+  "name": "network-blocked",
+  "description": "A run_command step whose output carries a Class 2 environment-block signature (docs/02 §11, docs/03 §2) — the sandbox blocks DNS resolution silently. No hook fires, exit stays 0, result.status stays SUCCESS: only the ordinary tool output reveals the block. The command must be one the gate actually lets through, otherwise the step becomes a Class 1 denial and the scripted output is never emitted — `curl` is in HARD_DENY, `git ls-remote` falls to general_worker's default 'ask'. Used to test events/detect.ts scanDenials() and that verified_success is withheld.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        {
+          "type": "agent_response",
+          "chunks": [],
+          "duration_seconds": 0.9,
+          "usage": [
+            16000,
+            60
+          ]
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": {
+            "CommandLine": "git ls-remote https://github.com/example/repo.git"
+          },
+          "tool_action": "Listing remote refs",
+          "tool_summary": "git ls-remote example repo",
+          "output": "fatal: unable to access 'https://github.com/example/repo.git/': Could not resolve host: github.com\n",
+          "duration_seconds": 0.11
+        },
+        {
+          "type": "agent_response",
+          "chunks": [
+            "The git ls-remote command failed with a DNS resolution error, so I could not reach the remote."
+          ],
+          "duration_seconds": 1.1,
+          "usage": [
+            16100,
+            40
+          ]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "The git ls-remote command failed with a DNS resolution error, so I could not reach the remote.",
+      "duration_seconds": 2.2
+    }
+  ]
+}

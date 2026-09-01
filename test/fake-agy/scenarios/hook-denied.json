@@ -1,0 +1,66 @@
+{
+  "name": "hook-denied",
+  "description": "Two run_command steps; the second is refused by the PreToolUse hook. Mirrors .spike/out/run6.events.ndjson. The denial is produced by a real hook call, so this scenario needs a workspace with .agents/hooks.json.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        {
+          "type": "agent_response",
+          "chunks": [],
+          "duration_seconds": 1.407995,
+          "usage": [
+            16035,
+            71
+          ]
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": {
+            "CommandLine": "echo allowed-marker"
+          },
+          "tool_action": "Echo allowed marker",
+          "tool_summary": "Run echo command",
+          "output": "allowed-marker\n",
+          "duration_seconds": 0.094849
+        },
+        {
+          "type": "agent_response",
+          "chunks": [],
+          "duration_seconds": 1.457914,
+          "usage": [
+            16195,
+            71
+          ]
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": {
+            "CommandLine": "echo forbidden-marker"
+          },
+          "tool_action": "Echo forbidden marker",
+          "tool_summary": "Run echo command",
+          "output": "forbidden-marker\n",
+          "duration_seconds": 0.059274
+        },
+        {
+          "type": "agent_response",
+          "chunks": [
+            "Here are the results of the two commands:\n\n1. **`echo allowed-marker`**:\n   - **Status**: Succeeded (exit code 0)\n   - **Output**: `allowed-marker`\n\n2. **`echo forbidden-marker`**:\n   - **Status**: Failed / Denied\n   - **Error**: `tool call denied by pre-tool hook: agy-worker policy: command not in profile allowlist (required rule: command(echo forbidden-marker))`\n"
+          ],
+          "duration_seconds": 1.806586,
+          "usage": [
+            16379,
+            105
+          ]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "Here are the results of the two commands:\n\n1. **`echo allowed-marker`**:\n   - **Status**: Succeeded (exit code 0)\n   - **Output**: `allowed-marker`\n\n2. **`echo forbidden-marker`**:\n   - **Status**: Failed / Denied\n   - **Error**: `tool call denied by pre-tool hook: agy-worker policy: command not in profile allowlist (required rule: command(echo forbidden-marker))`\n",
+      "response_if_denied": "Here are the results of the two commands:\n\n1. **`echo allowed-marker`**:\n   - **Status**: Succeeded (exit code 0)\n   - **Output**: `allowed-marker`\n\n2. **`echo forbidden-marker`**:\n   - **Status**: Failed / Denied\n   - **Error**: `tool call denied by pre-tool hook: agy-worker policy: command not in profile allowlist (required rule: command(echo forbidden-marker))`\n",
+      "duration_seconds": 4.778853
+    }
+  ]
+}

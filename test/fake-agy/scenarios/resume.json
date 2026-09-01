@@ -1,0 +1,25 @@
+{
+  "name": "resume",
+  "description": "Two turns meant to run as two SEPARATE processes, the second passing --conversation <id> from the first (docs/02 §6: lossless resume, num_turns and step_index continue). Turn 1's oneshot process answers a 'remember N' style prompt; turn 2, in a brand-new process resuming the same conversation id, answers as if it still had that context (agy.mjs replays turns_played from AGY_FAKE_STATE_DIR/<conversation_id>.json rather than truly remembering, but the observable contract — num_turns=2, conversation_id unchanged, response text proving turn 2 ran — is identical to what real agy showed in .spike/out/resume.out).",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.5, "usage": [16000, 30] },
+        { "type": "agent_response", "chunks": ["OK, I will remember 7919."], "duration_seconds": 0.5, "usage": [16030, 20] }
+      ],
+      "status": "SUCCESS",
+      "response": "OK, I will remember 7919.",
+      "duration_seconds": 1.1
+    },
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.4, "usage": [16050, 20] },
+        { "type": "agent_response", "chunks": ["7919"], "duration_seconds": 0.4, "usage": [16070, 10] }
+      ],
+      "status": "SUCCESS",
+      "response": "7919",
+      "duration_seconds": 0.9
+    }
+  ]
+}

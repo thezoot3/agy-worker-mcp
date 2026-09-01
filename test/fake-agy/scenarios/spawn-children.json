@@ -1,0 +1,24 @@
+{
+  "name": "spawn-children",
+  "description": "Named for a job whose run_command tool would fork background children (docs/04 #10's whole-process-group-kill guarantee). The fake binary never actually executes CommandLine — it only fabricates tool_info (see test/fake-agy/agy.mjs) — so it cannot itself spawn real OS descendants; agy.mjs is out of this scope's write access to change that. This scenario stands in for that case with the same long single-process sleep as 'hang', so agy_cancel / timeout tests can still assert the fake agy process's own group is empty afterwards (pgrep -g <pgid>). A real descendant-tree test would need agy.mjs itself to spawn a child for this step, which is a source change outside test/fake-agy/scenarios/**.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.1, "delay_ms": 200 },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "(sleep 60 &) ; sleep 60" },
+          "output": "\n",
+          "duration_seconds": 60,
+          "delay_ms": 60000
+        },
+        { "type": "agent_response", "chunks": ["Background work finished."], "duration_seconds": 0.1 }
+      ],
+      "status": "SUCCESS",
+      "response": "Background work finished.",
+      "duration_seconds": 60.3
+    }
+  ]
+}

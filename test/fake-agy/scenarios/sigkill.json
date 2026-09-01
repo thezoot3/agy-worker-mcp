@@ -1,0 +1,24 @@
+{
+  "name": "sigkill",
+  "description": "Long enough (several seconds of delay_ms across steps) that a test can look up the live pid from state.json and SIGKILL it directly (or SIGKILL the runner's own pid) before the turn finishes, to exercise reconcile's process_error / orphaned / stale-lock-reclaim paths (docs/04 #9, #10) instead of a clean exit_code finalize.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.2, "delay_ms": 500 },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "sleep 3 && echo woke-up" },
+          "output": "woke-up\n",
+          "duration_seconds": 3.0,
+          "delay_ms": 3000
+        },
+        { "type": "agent_response", "chunks": ["Slept and woke up."], "duration_seconds": 0.2, "delay_ms": 300 }
+      ],
+      "status": "SUCCESS",
+      "response": "Slept and woke up.",
+      "duration_seconds": 3.5
+    }
+  ]
+}

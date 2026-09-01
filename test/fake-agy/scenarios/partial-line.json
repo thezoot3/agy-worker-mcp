@@ -1,0 +1,32 @@
+{
+  "name": "partial-line",
+  "description": "Same shape as 'slow' — spaced-out steps so a test can read events.ndjson mid-run. The fake binary always writes one full JSON line per write() call (docs/02 §8: flush is incremental, but per-line, never mid-line), so a genuinely torn line at the *source* cannot be produced without editing agy.mjs. Real partial-line bytes are constructed by the integration test itself, appending an unterminated fragment directly to a job's events.ndjson and asserting events/cursor.ts's readLinesFrom() withholds it until the newline arrives. This scenario just supplies enough wall-clock spacing (delay_ms) for that test to land its write between two real lines.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.2, "delay_ms": 300 },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "echo first" },
+          "output": "first\n",
+          "duration_seconds": 0.05,
+          "delay_ms": 800
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "echo second" },
+          "output": "second\n",
+          "duration_seconds": 0.05,
+          "delay_ms": 300
+        },
+        { "type": "agent_response", "chunks": ["Both commands ran."], "duration_seconds": 0.2 }
+      ],
+      "status": "SUCCESS",
+      "response": "Both commands ran.",
+      "duration_seconds": 1.9
+    }
+  ]
+}

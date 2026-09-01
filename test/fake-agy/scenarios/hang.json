@@ -1,0 +1,24 @@
+{
+  "name": "hang",
+  "description": "A single step that sleeps far longer than any test's timeout_ms or cancel window, so the job is reliably still 'running' — used for agy_cancel and deadline/timeout tests (docs/04 #10, #11: pgrep -g <pgid> must be empty afterwards). The delay is deliberately large (60s) since the test is expected to cancel or let the deadline fire long before it would ever complete naturally.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.1, "delay_ms": 200 },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "sleep 60" },
+          "output": "\n",
+          "duration_seconds": 60,
+          "delay_ms": 60000
+        },
+        { "type": "agent_response", "chunks": ["Finally done."], "duration_seconds": 0.1 }
+      ],
+      "status": "SUCCESS",
+      "response": "Finally done.",
+      "duration_seconds": 60.3
+    }
+  ]
+}
