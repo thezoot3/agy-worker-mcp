@@ -156,6 +156,46 @@ export function readLinesFrom(
   }
 }
 
+/**
+ * Byte offset just past the last complete line, without reading the lines.
+ *
+ * `agy_wait` needs a truthful cursor once a job has finished: that branch
+ * returns the judgement packet instead of a cursor read, so without this it
+ * reported 0 and the caller's next `agy_logs({ after_cursor })` replayed the
+ * whole stream.
+ */
+export function completeLineEnd(filePath: string): number {
+  let fd: number
+  try {
+    fd = openSync(filePath, 'r')
+  } catch {
+    return 0
+  }
+  try {
+    const size = fstatSync(fd).size
+    if (size === 0) return 0
+
+    // The common case by far: a closed stream ends with its terminator.
+    const last = Buffer.alloc(1)
+    readSync(fd, last, 0, 1, size - 1)
+    if (last[0] === NEWLINE) return size
+
+    // A partial trailing write. Walk back for the previous terminator.
+    let windowSize = Math.min(size, 4096)
+    for (;;) {
+      const start = Math.max(0, size - windowSize)
+      const buf = Buffer.alloc(size - start)
+      readSync(fd, buf, 0, buf.length, start)
+      const idx = buf.lastIndexOf(NEWLINE)
+      if (idx !== -1) return start + idx + 1
+      if (start === 0) return 0
+      windowSize = Math.min(size, windowSize * 2)
+    }
+  } finally {
+    closeSync(fd)
+  }
+}
+
 /** Read just the first complete line. The gate uses this to grab `conversation_id`. */
 export function readFirstLine(filePath: string): string | null {
   let fd: number

@@ -5,14 +5,14 @@ import type { JudgementPacket } from '../../contract/types.js'
 import { reconcile } from '../../broker/reconcile.js'
 import { loadBrokerResult, projectJudgementPacket } from '../../broker/result.js'
 import { sleep } from '../../runner/reap.js'
-import { readLinesFrom } from '../../events/cursor.js'
+import { completeLineEnd, readLinesFrom } from '../../events/cursor.js'
 import { parseEventLines } from '../../events/parse.js'
 import { formatNormalized, normalizeParsed, tailSummary } from '../../events/normalize.js'
 import { getJob } from '../../store/jobs.js'
 import { errorReply, reply, type ToolContext, type ToolReply } from '../context.js'
 
 /**
- * `agy_wait` — long-poll until the job changes state or finishes.
+ * `agy_wait` — long-poll until the job finishes or `wait_ms` runs out.
  *
  * Implemented as 200 ms polling, not an in-process await: the job belongs to no
  * client, so there is no handle to await on (`docs/01` 결정 1). From the caller's
@@ -35,7 +35,9 @@ export const waitInput = z.object({
     .int()
     .min(0)
     .optional()
-    .describe('Byte offset from a previous call. Only newer events are returned.'),
+    .describe(
+      'Byte offset from a previous call, applied to the in-progress log tail. A finished job returns the full judgement packet and its end-of-stream cursor regardless.',
+    ),
 })
 
 export type WaitInput = z.infer<typeof waitInput>
@@ -71,6 +73,9 @@ export async function handleWait(ctx: ToolContext, input: WaitInput): Promise<To
         const packet = projectJudgementPacket(result, {
           maxLogTailLines: ctx.limits.max_log_tail_lines,
           maxBytes: ctx.limits.max_response_bytes,
+          // End of stream, not 0. The caller feeds this to `agy_logs`, and a
+          // finished job has nothing left to hand out.
+          cursor: completeLineEnd(paths.events),
         })
         return reply(packet)
       }

@@ -8,3 +8,6 @@ test/fake-agy/.fake-state/
 
 # live agy usage tally
 test/live/.usage.jsonl
+
+# local MCP client registration (absolute paths, machine-specific)
+.mcp.json
