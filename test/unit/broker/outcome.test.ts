@@ -57,6 +57,7 @@ describe('exit 0 + SUCCESS is never trusted on its own (docs/03 §2)', () => {
             tool: 'run_command',
             command: 'git push',
             required_rule: null,
+            policy: 'deny_list',
             source: 'gate',
             message: 'denied',
             step_idx: 3,

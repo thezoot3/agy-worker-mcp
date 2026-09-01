@@ -323,6 +323,16 @@ export interface DenialClass1 {
   command: string | null
   /** Rule string the caller can paste straight into the next `permissions.allow`. */
   required_rule: string | null
+  /**
+   * Which stage of the gate's decision order refused, when our own gate did.
+   * Null for a refusal we did not author.
+   *
+   * The recovery differs by stage, so the caller needs it: `profile_allowlist`
+   * and `default` are fixed by adding `required_rule` to `permissions.allow`,
+   * while `containment` and `deny_list` cannot be — the first needs a different
+   * path, the second is not narrowable at all.
+   */
+  policy: GateDenialPayload['policy'] | null
   /** Whether the refusal came from our gate (parsed marker) or elsewhere. */
   source: 'gate' | 'agy' | 'unknown'
   message: string

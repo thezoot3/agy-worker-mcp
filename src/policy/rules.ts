@@ -147,7 +147,7 @@ function basename(token: string): string {
 }
 
 /** A minimal shell-aware tokenizer: `'...'`/`"..."` groups survive as one token, quotes stripped. */
-function tokenizeCommand(cmd: string): string[] {
+export function tokenizeCommand(cmd: string): string[] {
   const tokens: string[] = []
   let i = 0
   const n = cmd.length

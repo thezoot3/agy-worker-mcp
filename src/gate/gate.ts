@@ -18,6 +18,7 @@ import {
   requiredRuleFor,
   subjectFromToolCall,
 } from '../policy/rules.js'
+import { escapingRedirectTarget } from '../policy/containment.js'
 import type { BoundJob } from './bind.js'
 import { bindConversation } from './bind.js'
 import { openStore } from '../store/db.js'
@@ -112,6 +113,37 @@ export function decide(input: GateDecideInput): GateOutcome {
   })
 
   if (subject) {
+    // Step 0 — containment, ahead of every rule list and independent of
+    // `default_decision`.
+    //
+    // Rule matching is a *prefix* comparison over tokens (`matchCommandPattern`),
+    // so `command(ls)` matches `ls -la > /tmp/evil` too: an allow rule cannot
+    // constrain what a shell line appends. Measured live on 2026-09-01 — the
+    // write landed, under `--sandbox`, with no denial recorded, under both
+    // shipped profiles (`docs/02` §4-c). Redirection is the one part of shell
+    // grammar small enough to parse reliably, so it is closed here rather than
+    // left to the rule lists that structurally cannot see it.
+    const escape = command === null ? null : escapingRedirectTarget(command, policy.workspace)
+    if (escape !== null) {
+      const denialPayload: GateDenialPayload = {
+        job_id: job.job_id,
+        tool: toolName,
+        required_rule: null,
+        policy: 'containment',
+        on_denial: policy.on_denial,
+      }
+      const reason = composeDenialReason(
+        `이 명령은 워크스페이스 밖(${escape})으로 출력을 리다이렉트한다. 쓰기는 워크스페이스 안에서만 가능하다. 워크스페이스 안 경로로 다시 시도하거나, 파일 쓰기가 목적이면 write_file 도구를 쓸 것.`,
+        policy.on_denial,
+        denialPayload,
+      )
+      return {
+        decision: { decision: 'deny', reason },
+        log: makeLog('deny', 'containment', null, reason),
+        requestsAbort: policy.on_denial === 'abort',
+      }
+    }
+
     const denyHit = firstMatchForDenial(parseRulesLenient(policy.deny), subject)
     if (denyHit) {
       const denialPayload: GateDenialPayload = {

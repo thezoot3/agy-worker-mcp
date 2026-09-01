@@ -41,6 +41,7 @@ export function detectClass1(step: AgyStepUpdateEvent): DenialClass1 | null {
   const tool = su.tool_name ?? su.tool_info?.name ?? 'unknown'
   const command = commandOf(su.tool_info)
   const required_rule = extractRequiredRule(message)
+  const gatePayload = parseGateDenial(message)
 
   let source: DenialClass1['source'] = 'unknown'
   if (message.startsWith(HOOK_DENIAL_PREFIX)) {
@@ -54,6 +55,7 @@ export function detectClass1(step: AgyStepUpdateEvent): DenialClass1 | null {
     tool,
     command,
     required_rule,
+    policy: gatePayload?.policy ?? null,
     source,
     message,
     step_idx: su.step_index ?? null,
