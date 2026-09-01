@@ -4,7 +4,7 @@ import type { EffectiveConfig, JobRow, JobStateFile } from '../contract/types.js
 import { jobPaths, readJsonIfExists } from '../contract/paths.js'
 import { readLinesFrom } from '../events/cursor.js'
 import { okEvents, parseEventLines } from '../events/parse.js'
-import { isPidAlive, isSameProcess, killProcessGroup } from '../runner/reap.js'
+import { checkProcessIdentity, isPidAlive, isSameProcess, killProcessGroup } from '../runner/reap.js'
 import type { Store } from '../store/db.js'
 import { now, transaction } from '../store/db.js'
 import { getJob, listJobs, tryGetJob, updateJob } from '../store/jobs.js'
@@ -28,7 +28,9 @@ import { buildBrokerResult, writeBrokerResult } from './result.js'
  *
  * The order above is the order these are checked in, and it matters: `exit_code`
  * existing always wins (even over a passed deadline — the runner beat us to it),
- * and a passed deadline is checked before a pid-reuse mismatch.
+ * and a passed deadline is checked before a pid-reuse mismatch. Among the last
+ * two, pid reuse is checked first: it is the only *positive* observation of the
+ * three, while "pid gone" covers both an ordinary exit and a lost runner.
  */
 
 export interface ReconcileOptions {
@@ -158,6 +160,16 @@ export async function reconcileJob(store: Store, job: JobRow, opts?: ReconcileOp
     return job
   }
 
+  const identity = checkProcessIdentity(job.pid, job.proc_start_time)
+
+  // Row 4: pid alive, but the start-time token belongs to a *different*
+  // process. Checked before row 2 because it is the only positive conclusion of
+  // the three — `gone` covers both an ordinary exit and a lost runner, and
+  // telling those apart is row 2's job.
+  if (identity === 'different') {
+    return finalizeAbnormal(store, job, 'orphaned', nowMs)
+  }
+
   // Row 2: pid gone, no exit_code file. The runner was killed before it could
   // record a result.
   //
@@ -168,18 +180,12 @@ export async function reconcileJob(store: Store, job: JobRow, opts?: ReconcileOp
   // caught in that window as `process_error`, which a caller polling reconcile
   // in a loop hits reliably. So re-poll for the exit_code first, and only
   // conclude the runner is lost once the grace elapses with nothing written.
-  if (!isPidAlive(job.pid)) {
+  if (identity === 'gone') {
     const exitAfterDeath = await pollExitCode(paths.exitCode, RUNNER_WRITEBACK_GRACE_MS)
     if (exitAfterDeath !== null) {
       return finalizeJob(store, job, exitAfterDeath, now())
     }
     return finalizeAbnormal(store, job, 'process_error', now())
-  }
-
-  // Row 4: pid alive, but the start-time token no longer matches — a different
-  // process now owns that pid.
-  if (!isSameProcess(job.pid, job.proc_start_time)) {
-    return finalizeAbnormal(store, job, 'orphaned', nowMs)
   }
 
   // Row 5: the gate marked this job `canceling` (on_denial: 'abort'). The gate

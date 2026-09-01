@@ -64,6 +64,27 @@ export function isSameProcess(pid: number, procStartTime: string | null): boolea
   return current !== null && current === procStartTime
 }
 
+/**
+ * Three-way identity check, for callers that must not treat "the process just
+ * exited" as "a different process now owns this pid".
+ *
+ * {@link isSameProcess} deliberately folds both into `false` — for lock
+ * reclamation that is right, since neither case is a live holder. `reconcile`
+ * needs them apart: `different` is pid reuse (`orphaned`), while `gone` is an
+ * ordinary exit whose `exit_code` may be a few milliseconds from landing.
+ */
+export type ProcessIdentity = 'same' | 'different' | 'gone'
+
+export function checkProcessIdentity(pid: number, procStartTime: string | null): ProcessIdentity {
+  if (!isPidAlive(pid)) return 'gone'
+  if (procStartTime === null) return 'same'
+  const current = getProcStartTime(pid)
+  // `ps` returning nothing means the process disappeared between the liveness
+  // check and here. That is `gone`, never a mismatch.
+  if (current === null) return 'gone'
+  return current === procStartTime ? 'same' : 'different'
+}
+
 /** Process-group id of a pid, or null if it is gone. */
 export function getPgid(pid: number): number | null {
   try {
