@@ -315,6 +315,10 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
   const config = readJsonIfExists<EffectiveConfig>(paths.effectiveConfig)
   const expectedArtifacts = config?.expected_artifacts ?? []
   const jsonSchemaPath = config?.json_schema_path ?? null
+  // Only `state.json` records that the runner's idle watchdog closed stdin; the
+  // exit code it produces is an ordinary 0.
+  const idleClosed = readJsonIfExists<JobStateFile>(paths.state)?.idle_closed === true
+  const idleClosedAfterMs = idleClosed ? (config?.idle_timeout_ms ?? null) : null
 
   const read = readLinesFrom(paths.events, 0)
   const parsed = parseEventLines(read.lines, 0)
@@ -332,6 +336,7 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
     pidReused: flags.pidReused,
     expectedArtifacts,
     jsonSchemaPath,
+    idleClosedAfterMs,
     now: flags.nowMs,
   })
 

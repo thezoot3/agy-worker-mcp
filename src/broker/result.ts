@@ -33,6 +33,13 @@ export interface BuildResultInput {
   pidReused: boolean
   expectedArtifacts: string[]
   jsonSchemaPath: string | null
+  /**
+   * `idle_timeout_ms` when the runner's idle watchdog ended the session, null
+   * otherwise. A clean exit 0, so nothing here changes the outcome — but the
+   * caller cannot otherwise tell an idle close from an ordinary finish, and the
+   * two call for different next steps.
+   */
+  idleClosedAfterMs: number | null
   now: number
 }
 
@@ -49,6 +56,12 @@ export function buildBrokerResult(store: Store, input: BuildResultInput): Broker
     structuredOutput: undefined,
     jsonSchemaPath: input.jsonSchemaPath,
   })
+
+  if (input.idleClosedAfterMs !== null) {
+    verification.warnings.push(
+      `session closed by idle_timeout_ms (${input.idleClosedAfterMs} ms) with no agy_send after the last turn — resume with agy_start({ session_id })`,
+    )
+  }
 
   const agentReport = buildAgentReport(input.events)
   const hadExpectations = input.expectedArtifacts.length > 0 || input.jsonSchemaPath !== null

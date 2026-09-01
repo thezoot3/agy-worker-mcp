@@ -60,6 +60,7 @@ describe('idle timeout — a session-mode job with no follow-up agy_send closes 
       async () => {
         const w = replyJson(await handleWait(ctx, { job_id: started.job_id, wait_ms: 500 } as never)) as {
           lifecycle: string
+          warnings: string[]
         }
         return w.lifecycle === 'finished' ? w : null
       },
@@ -74,9 +75,19 @@ describe('idle timeout — a session-mode job with no follow-up agy_send closes 
     const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
       broker_summary: { outcome: string }
       agent_report: { num_turns: number | null }
+      verification: { warnings: string[] }
     }
     expect(full.broker_summary.outcome).toBe('success_unverified')
     expect(full.agent_report.num_turns).toBe(1)
+
+    // An idle close exits 0 like any clean finish, so without an explicit
+    // warning the caller cannot tell "your session was reaped" from "the job
+    // ended normally" — and only the first of those calls for a resume.
+    const idleWarning = full.verification.warnings.find((w) => w.includes('idle_timeout_ms'))
+    expect(idleWarning).toBeDefined()
+    expect(idleWarning).toContain('500')
+    expect(idleWarning).toContain('agy_start({ session_id })')
+    expect(waited.warnings).toEqual(full.verification.warnings)
 
     const state = JSON.parse(
       readFileSync(join(ctx.paths.jobsDir, started.job_id, 'state.json'), 'utf8'),
