@@ -131,7 +131,11 @@ export async function reconcileJob(store: Store, job: JobRow, opts?: ReconcileOp
   const exitCode = readExitCode(paths.exitCode)
 
   if (exitCode !== null) {
-    return finalizeJob(store, job, exitCode, nowMs)
+    // The runner's own watchdog may have produced this exit code by killing the
+    // process group at the deadline. Only `state.json` carries that fact — the
+    // exit code alone is indistinguishable from an ordinary failure.
+    const runnerTimedOut = readJsonIfExists<JobStateFile>(paths.state)?.timed_out === true
+    return finalizeJob(store, job, exitCode, nowMs, runnerTimedOut)
   }
 
   // Row 3 (checked ahead of the pid-null early return): a deadline that has
@@ -149,7 +153,9 @@ export async function reconcileJob(store: Store, job: JobRow, opts?: ReconcileOp
     }
     const exitAfterKill = await pollExitCode(paths.exitCode)
     if (exitAfterKill !== null) {
-      return finalizeJob(store, job, exitAfterKill, now())
+      // We killed it for the deadline, so the exit code it produced is a
+      // timeout's exit code, not a failure's.
+      return finalizeJob(store, job, exitAfterKill, now(), true)
     }
     return finalizeAbnormal(store, job, 'timed_out', now())
   }
@@ -241,18 +247,28 @@ function ingestRunnerState(store: Store, job: JobRow, statePath: string): JobRow
  *
  * The job's *incoming* lifecycle carries one more fact: `'canceling'` means
  * `agy_cancel` had already asked for this exit, so the outcome is `canceled`
- * even though a normal exit code came back.
+ * even though a normal exit code came back. `timedOut` carries the other one,
+ * from `state.json`: the runner's watchdog killed the group at the deadline,
+ * which is not an ordinary failure however the exit code reads.
  */
-export function finalizeJob(store: Store, job: JobRow, exitCode: number, nowMs: number): JobRow {
+export function finalizeJob(
+  store: Store,
+  job: JobRow,
+  exitCode: number,
+  nowMs: number,
+  timedOut = false,
+): JobRow {
   return transaction(store.db, () => {
     const fresh = tryGetJob(store, job.job_id)
     if (fresh === null) return job
     if (fresh.lifecycle === 'finished') return fresh
 
+    const canceled = fresh.lifecycle === 'canceling'
     return finalizeCore(store, fresh, {
       exitCode,
-      timedOut: false,
-      canceled: fresh.lifecycle === 'canceling',
+      // An explicit cancel outranks the deadline: the user asked for this exit.
+      timedOut: timedOut && !canceled,
+      canceled,
       runnerLost: false,
       pidReused: false,
       nowMs,

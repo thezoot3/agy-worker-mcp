@@ -538,6 +538,17 @@ export interface JobStateFile {
   started_at: number | null
   finished_at: number | null
   updated_at: number
+  /**
+   * True when the runner's own deadline watchdog killed the process group.
+   *
+   * Without it the fact is lost: the runner kills agy, writes the resulting
+   * `exit_code` (1, or a signal code), and `reconcile` — which only sees the
+   * exit code — classifies a timeout as an ordinary `failed`. Measured live:
+   * `timeout_ms: 25000` produced `outcome: "failed", exit_code: 1`.
+   *
+   * Optional because a `state.json` written by an older build will not have it.
+   */
+  timed_out?: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

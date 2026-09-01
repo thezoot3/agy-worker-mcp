@@ -65,7 +65,9 @@ live('L12 — agy_cancel empties the real process group', () => {
       { timeoutMs: 40_000, label: 'runner published a pgid' },
     )
 
-    const canceled = replyJson(await handleCancel(ctx, { job_id: started.job_id } as never)) as Record<string, unknown>
+    const canceled = replyJson(await handleCancel(ctx, { job_id: started.job_id } as never)) as {
+      killed?: boolean
+    }
     // eslint-disable-next-line no-console
     console.log('[L12] cancel ->', JSON.stringify(canceled))
 
@@ -92,6 +94,8 @@ live('L12 — agy_cancel empties the real process group', () => {
     // eslint-disable-next-line no-console
     console.log('[L12]', JSON.stringify({ outcome: finished.outcome, exit_code: finished.exit_code }))
     expect(processGroupAlive(live_.pgid!)).toBe(false)
+    expect(canceled.killed).toBe(true)
+    expect(finished.outcome).toBe('canceled')
 
     ctx.store.close()
   })
@@ -144,7 +148,11 @@ live('L13 — a short timeout_ms kills the real tree and finalizes timed_out', (
     console.log('[L13]', JSON.stringify({ outcome: finished.outcome, exit_code: finished.exit_code }))
 
     expect(processGroupAlive(live_.pgid!)).toBe(false)
-    expect(['timed_out', 'canceled', 'failed']).toContain(finished.outcome)
+    // Exactly `timed_out`. A set that also accepts `failed` would hide the very
+    // bug this test found: the runner's watchdog kills the group, writes the
+    // resulting exit code, and the deadline verdict is lost unless `state.json`
+    // carries it.
+    expect(finished.outcome).toBe('timed_out')
 
     ctx.store.close()
   })

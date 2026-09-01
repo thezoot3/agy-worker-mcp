@@ -81,7 +81,7 @@ export const PROFILES: Readonly<Record<Profile, ProfileDef>> = Object.freeze({
   general_worker: {
     name: 'general_worker',
     description:
-      '워크스페이스 안 읽기/쓰기와 git/pytest 를 허용하는 일반 작업 profile. push, 설치, 삭제, 권한 상승은 하드 차단된다.',
+      '워크스페이스 안 읽기/쓰기와 git/pytest 를 허용하는 일반 작업 profile. push, 설치, 삭제, 권한 상승은 하드 차단된다. ⚠ 신뢰 경계가 아니다: default_decision 이 ask 라 deny 목록에 없는 임의 셸 명령이 통과하고, agy 의 --sandbox 는 워크스페이스 밖 파일 쓰기를 막지 않는다 (실측, docs/02 §4-c). 신뢰할 수 없는 프롬프트에는 research_readonly 를 쓸 것.',
     write: true,
     allow: [
       'read_file({workspace}/**)',

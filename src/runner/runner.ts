@@ -153,6 +153,7 @@ export async function runJob(opts: RunJobOptions): Promise<RunJobResult> {
     started_at: spawned.startedAt,
     finished_at: finishedAt,
     updated_at: finishedAt,
+    timed_out: timedOut,
   })
 
   return {

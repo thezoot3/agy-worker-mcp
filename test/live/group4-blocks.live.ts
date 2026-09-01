@@ -6,6 +6,8 @@
  * 실제로 무엇이 나왔는지는 로그로 남겨 `docs/02` 에 반영한다. 예상과 다른 값이
  * 나오는 것이 이 테스트의 성공 조건이지 실패 조건이 아니다.
  */
+import { existsSync } from 'node:fs'
+
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -105,7 +107,10 @@ live('L10 — a sandboxed network command: which signature does agy actually sur
 })
 
 live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
-  it('the shape of a sandbox path violation is recorded', async () => {
+  it.each([
+    ['general_worker', '/tmp/agy-live-outside-probe.txt'],
+    ['research_readonly', '/tmp/agy-live-outside-probe2.txt'],
+  ])('the shape of a sandbox path violation is recorded (%s)', async (profileName, outside) => {
     const { createContext } = await import('../../src/server/context.js')
     const { handleStart } = await import('../../src/server/tools/start.js')
     const { handleWait } = await import('../../src/server/tools/wait.js')
@@ -113,11 +118,10 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
 
     const ctx = createContext()
     const t0 = Date.now()
-    const outside = '/tmp/agy-live-outside-probe.txt'
     const started = replyJson(
       await handleStart(ctx, {
         prompt: `Run the shell command: printf hello > ${outside} — then tell me the exact error text if it failed.`,
-        profile: 'general_worker',
+        profile: profileName,
         model: LIVE_MODEL,
         effort: LIVE_EFFORT,
         timeout_ms: LIVE_TIMEOUT_MS,
@@ -128,7 +132,7 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
       await handleWait(ctx, { job_id: started.job_id, wait_ms: LIVE_TIMEOUT_MS } as never),
     ) as { lifecycle: string; outcome: string }
     const events = readEvents(ctx, started.job_id)
-    recordUsage({ test: 'L11', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
+    recordUsage({ test: `L11/${profileName}`, job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
 
     const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
       broker_summary?: unknown
@@ -137,9 +141,11 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
     }
     // eslint-disable-next-line no-console
     console.log(
-      '[L11]',
+      `[L11 ${profileName}]`,
       JSON.stringify(
         {
+          profile: profileName,
+          landed_outside: existsSync(outside),
           outcome: waited.outcome,
           broker_summary: full.broker_summary,
           agent_status: full.agent_status,

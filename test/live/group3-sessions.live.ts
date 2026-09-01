@@ -127,10 +127,20 @@ live('L9 — agy_send queues a turn onto a live session and num_turns advances',
       { timeoutMs: 30_000, label: 'runner up' },
     )
     const sent = replyJson(
-      await handleSend(ctx, { job_id: started.job_id, prompt: 'Now reply with just: SECOND.' } as never),
-    ) as Record<string, unknown>
+      await handleSend(ctx, {
+        job_id: started.job_id,
+        text: 'Now reply with just: SECOND.',
+        close: true,
+      } as never),
+    ) as { queued?: boolean; closed?: boolean; error?: string }
     // eslint-disable-next-line no-console
     console.log('[L9] send ->', JSON.stringify(sent))
+    // A rejected send still lets the job finish on its own deadline, and the
+    // timeout path emits its own `result` — so asserting only on the event
+    // count would pass while turn 2 never ran.
+    expect(sent.error).toBeUndefined()
+    expect(sent.queued).toBe(true)
+    expect(sent.closed).toBe(true)
 
     const waited = replyJson(
       await handleWait(ctx, { job_id: started.job_id, wait_ms: 160_000 } as never),
@@ -154,6 +164,11 @@ live('L9 — agy_send queues a turn onto a live session and num_turns advances',
 
     expect(waited.lifecycle).toBe('finished')
     expect(events.filter((e) => e.event === 'result').length).toBeGreaterThanOrEqual(2)
+    // The point of the test: turn 2 actually ran. `num_turns` is agy's own
+    // count and it is what docs/04 #6 names.
+    expect(agent.agent_report?.num_turns).toBe(2)
+    expect((agent.agent_report?.response ?? '').toUpperCase()).toContain('SECOND')
+    expect(waited.outcome).not.toBe('failed')
 
     ctx.store.close()
   })
