@@ -25,7 +25,8 @@
     "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('src/contract/schema.sql','dist/contract/schema.sql')\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:live": "AGY_LIVE=1 vitest run --config vitest.live.config.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -5,3 +5,6 @@ dist/
 
 # fake agy conversation state
 test/fake-agy/.fake-state/
+
+# live agy usage tally
+test/live/.usage.jsonl
