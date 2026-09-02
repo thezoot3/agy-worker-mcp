@@ -184,7 +184,16 @@ export function writeWorkspaceFile(p: LiveProject, rel: string, body: string): s
 export function processGroupAlive(pgid: number): boolean {
   try {
     const out = execFileSync('pgrep', ['-g', String(pgid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-    return out.trim().length > 0
+    const pids = out.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (pids.length === 0) return false
+    const states = execFileSync('ps', ['-o', 'stat=', '-p', pids.join(',')], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return states.split('\n').some((l) => {
+      const s = l.trim()
+      return s.length > 0 && !s.startsWith('Z')
+    })
   } catch {
     return false
   }

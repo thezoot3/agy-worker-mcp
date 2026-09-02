@@ -152,11 +152,28 @@ export function replyJson<T = Record<string, unknown>>(reply: { content: Array<{
   return JSON.parse(reply.content[0]!.text) as T
 }
 
-/** True when the OS reports at least one live pid in this process group. */
+/**
+ * True when the OS reports at least one *live* pid in this process group.
+ *
+ * Zombies do not count. A `kill -9` leaves each victim as a zombie until its
+ * parent reaps it, and when that parent was itself killed the reaping is up to
+ * init — which on Linux CI is slow enough that a test waiting for "the group is
+ * gone" would otherwise time out on processes that are already dead. `pgrep`
+ * lists zombies, so filter them out by state.
+ */
 export function processGroupAlive(pgid: number): boolean {
   try {
     const out = execFileSync('pgrep', ['-g', String(pgid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-    return out.split('\n').some((l) => l.trim().length > 0)
+    const pids = out.split('\n').map((l) => l.trim()).filter(Boolean)
+    if (pids.length === 0) return false
+    const states = execFileSync('ps', ['-o', 'stat=', '-p', pids.join(',')], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return states.split('\n').some((l) => {
+      const s = l.trim()
+      return s.length > 0 && !s.startsWith('Z')
+    })
   } catch {
     return false
   }
