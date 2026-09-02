@@ -11,3 +11,16 @@ test/live/.usage.jsonl
 
 # local MCP client registration (absolute paths, machine-specific)
 .mcp.json
+
+# internal development notes (design records, live-verification logs)
+docs/.local/
+
+# gate hook config written into the workspace by agy_start (absolute paths)
+.agents/
+
+# throwaway agy CLI probe workspaces
+.spike/
+.spike2/
+
+# local orchestration workflows
+.claude/
