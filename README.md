@@ -1,3 +1,5 @@
+> [!WARNING]
+> This MCP is under development. there's a bunch of security issues and crashes. Don't use it on your project
 # agy-worker-mcp
 
 An MCP server that runs the Google Antigravity CLI (`agy`) as an asynchronous
