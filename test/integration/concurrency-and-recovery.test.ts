@@ -90,7 +90,7 @@ describe('#9 — a lock holder killed with SIGKILL is reclaimed as stale on the 
     // Kill the underlying agy process directly (docs/04 #9 says "lock holder
     // kill -9", i.e. the process actually holding the resource, not our own
     // process tree).
-    execFileSync('kill', ['-9', String(state!.pid)])
+    process.kill(state!.pid!, 'SIGKILL')
     await waitUntil(() => !isPidAliveOs(state!.pid!), { timeoutMs: 5000, label: 'killed pid actually gone' })
 
     const second = await handleStart(ctx, { prompt: 'second', profile: 'general_worker' } as never)
@@ -219,8 +219,12 @@ describe('#10 — reconcile either re-attaches a still-running job or classifies
       .map((s) => s.trim())
       .filter(Boolean)
     expect(runnerPids.length).toBeGreaterThan(0)
-    execFileSync('kill', ['-9', ...runnerPids])
-    execFileSync('kill', ['-9', `-${state!.pgid}`])
+    for (const pid of runnerPids) process.kill(Number(pid), 'SIGKILL')
+    // Negative pid = the whole process group. Node signals it directly; going
+    // through `/bin/kill` instead means depending on how that particular
+    // implementation parses a leading-dash argument, which is not the same on
+    // macOS and Linux.
+    process.kill(-state!.pgid!, 'SIGKILL')
     await waitUntil(() => (processGroupAlive(state!.pgid!) ? null : true), {
       timeoutMs: 8000,
       label: () => `process group gone; survivors: ${describeProcessGroup(state!.pgid!)}`,

@@ -15,43 +15,18 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/**
- * True when the pid names a process that can still do something.
- *
- * `kill(pid, 0)` is the first test, and it answers true also for a process we
- * cannot signal (EPERM) — it exists. It also answers true for a **zombie**: a
- * process that has already exited but has not been reaped by its parent. That
- * distinction matters here. When a runner is killed and its own parent is gone
- * too, reaping falls to init, and on Linux that can take long enough for a
- * caller polling this function to conclude the job is still running and never
- * finalize it. A zombie will never write another byte, so it is not alive for
- * any purpose this module serves.
- *
- * `ps` failing (or not reporting a state) leaves the `kill(pid, 0)` answer
- * standing — never treat a missing diagnostic as proof of death.
- */
+/** `kill(pid, 0)`. True also for a process we cannot signal (EPERM) — it exists. */
 export function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
+    return true
   } catch (e: unknown) {
     const code = (e as NodeJS.ErrnoException | undefined)?.code
-    if (code !== 'EPERM') return false
-  }
-  return !isZombie(pid)
-}
-
-/** `ps` process state starting with `Z`. False whenever `ps` cannot tell us. */
-function isZombie(pid: number): boolean {
-  try {
-    const out = execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-    return out.trim().startsWith('Z')
-  } catch {
+    if (code === 'EPERM') return true
     return false
   }
 }
+
 
 /**
  * Opaque per-process start token, compared for equality and never parsed.
