@@ -12,6 +12,7 @@ import {
   isPidAliveOs,
   makeProject,
   processGroupAlive,
+  describeProcessGroup,
   readJobState,
   replyJson,
   sleep,
@@ -222,7 +223,7 @@ describe('#10 — reconcile either re-attaches a still-running job or classifies
     execFileSync('kill', ['-9', `-${state!.pgid}`])
     await waitUntil(() => (processGroupAlive(state!.pgid!) ? null : true), {
       timeoutMs: 8000,
-      label: 'process group gone',
+      label: () => `process group gone; survivors: ${describeProcessGroup(state!.pgid!)}`,
     })
     await sleep(200)
     expect(fileExists(jobPaths(ctx.paths, started.job_id).exitCode)).toBe(false)

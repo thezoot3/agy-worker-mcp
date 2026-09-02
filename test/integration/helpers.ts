@@ -128,7 +128,7 @@ export function applyEnv(p: TestProject, scenario: string): void {
 /** Poll `fn` until it returns truthy or `timeoutMs` elapses. Throws on timeout. */
 export async function waitUntil<T>(
   fn: () => T | null | undefined | false | Promise<T | null | undefined | false>,
-  opts?: { timeoutMs?: number; intervalMs?: number; label?: string },
+  opts?: { timeoutMs?: number; intervalMs?: number; label?: string | (() => string) },
 ): Promise<T> {
   const timeoutMs = opts?.timeoutMs ?? 15_000
   const intervalMs = opts?.intervalMs ?? 100
@@ -137,7 +137,8 @@ export async function waitUntil<T>(
     const v = await fn()
     if (v) return v
     if (Date.now() >= deadline) {
-      throw new Error(`waitUntil timed out after ${timeoutMs}ms${opts?.label ? `: ${opts.label}` : ''}`)
+      const label = typeof opts?.label === 'function' ? opts.label() : opts?.label
+      throw new Error(`waitUntil timed out after ${timeoutMs}ms${label ? `: ${label}` : ''}`)
     }
     await new Promise((r) => setTimeout(r, intervalMs))
   }
@@ -176,6 +177,29 @@ export function processGroupAlive(pgid: number): boolean {
     })
   } catch {
     return false
+  }
+}
+
+/**
+ * `pid ppid pgid stat args` for every process still in this group.
+ *
+ * Only ever used to make a "the group should be gone" timeout say *what* is
+ * still there — a bare timeout on a machine you cannot attach to (CI) tells you
+ * nothing about whether the survivor is a zombie, the leader, or a child that
+ * escaped the kill.
+ */
+export function describeProcessGroup(pgid: number): string {
+  try {
+    const out = execFileSync('ps', ['-eo', 'pid,ppid,pgid,stat,args'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    const rows = out
+      .split('\n')
+      .filter((l) => l.trim().split(/\s+/)[2] === String(pgid))
+    return rows.length > 0 ? rows.join(' | ') : '(no rows)'
+  } catch (e) {
+    return `(ps failed: ${String(e)})`
   }
 }
 
