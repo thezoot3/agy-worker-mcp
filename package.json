@@ -4,6 +4,25 @@
   "description": "MCP server that drives the Google Antigravity CLI (agy) as an asynchronous worker agent",
   "type": "module",
   "license": "MIT",
+  "author": "Siwoo Ryu",
+  "homepage": "https://github.com/thezoot3/agy-worker-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thezoot3/agy-worker-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thezoot3/agy-worker-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "antigravity",
+    "agy",
+    "agent",
+    "worker",
+    "claude-code",
+    "codex"
+  ],
   "engines": {
     "node": ">=22.5.0"
   },
@@ -21,8 +40,13 @@
     "dist",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('src/contract/schema.sql','dist/contract/schema.sql')\"",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
