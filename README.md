@@ -1,147 +1,172 @@
 # agy-worker-mcp
 
 An MCP server that runs the Google Antigravity CLI (`agy`) as an asynchronous
-worker agent, callable from Codex, Claude Code, and other MCP clients.
+worker agent, callable from Claude Code, Codex, and any other MCP client.
 
 Jobs are detached from the client that started them: a job's process outlives
 the MCP connection, its stdout/stderr are redirected to files rather than
 piped, and its state lives in a project-local SQLite database. Any client
-connected to the same project can start a job, watch it, take it over after
-its original caller disconnected, or resume its conversation later.
-
-The full design record — architecture decisions, the measured `agy` CLI facts
-everything here is built on, the permission-gate and session model, and MVP
-scope — lives in [`docs/`](./docs), starting at [`docs/README.md`](./docs/README.md).
-This file is the practical, "how do I run and use it" entry point.
+connected to the same project can start a job, watch it, take it over after its
+original caller disconnected, or resume its conversation later.
 
 ## Why detached jobs
 
-`agy` runs turns that can take minutes to an hour. A plain stdio MCP server
-tied to one client's process would lose the job the moment that client
-disconnects, and would give a second client (say, Codex checking on a job
-Claude Code started) no way to see it. Detaching the process, redirecting its
-output to disk, and coordinating through SQLite makes the job durable and
-visible independent of who is currently connected. See
-[`docs/01-architecture.md`](./docs/01-architecture.md) for the full reasoning.
+`agy` runs turns that take minutes to an hour. A plain stdio MCP server tied to
+one client's process would lose the job the moment that client disconnects, and
+would give a second client (Codex checking on a job Claude Code started) no way
+to see it. Detaching the process, redirecting its output to disk, and
+coordinating through SQLite makes the job durable and visible independent of
+who is currently connected.
 
 ## The one fact that matters most
 
-**`agy`'s own exit code and status cannot be trusted.** A permission denial
-from the gate and a sandbox network block both surface as `exit 0` /
-`status: SUCCESS` — `agy` itself does not know it was blocked, and will often
-report success after quietly failing or working around the block. Every job
-result this server returns carries a `broker`-computed `outcome` that is
-derived from actual events, exit status, and filesystem checks, kept
-deliberately separate from `agy`'s self-report (`agent_report`). Always read
-`outcome` / `contract_status`, never `agent_report.status`, to decide whether
-a job actually did what was asked. Details: [`docs/02-agy-cli-findings.md`](./docs/02-agy-cli-findings.md).
+**`agy`'s own exit code and status cannot be trusted.** A permission denial and
+a sandbox network block both surface as `exit 0` / `status: SUCCESS` — `agy`
+itself does not know it was blocked, and will often report success after
+quietly failing or working around the block.
 
-## Install and register
+Every result this server returns carries a broker-computed `outcome`, derived
+from actual events, exit status, and filesystem checks, kept deliberately
+separate from `agy`'s self-report (`agent_report`). Read `outcome` and
+`contract_status`; never `agent_report.status`.
+
+## Requirements
+
+- Node.js ≥ 22.5
+- The `agy` CLI on `PATH` (developed against 1.1.23).
+  `agy_capabilities` tells you whether the server can find it.
+
+## Install
+
+Not published to npm yet. Install straight from GitHub:
 
 ```bash
-npm install
-npm run build
+npm install -g github:thezoot3/agy-worker-mcp
 ```
 
-This package is not published to npm, so register it by absolute path to the
-built `dist/server.js` (substitute your own clone path).
+That builds on install (`prepare`) and puts `agy-worker-mcp` on your `PATH`.
 
-Claude Code — project-local, which is easy to undo and affects nothing else:
+Register it — Claude Code, project-scoped, which is easy to undo and affects
+nothing else:
 
 ```bash
-claude mcp add agy --scope project -- node /abs/path/to/agy-worker-mcp/dist/server.js
+claude mcp add agy --scope project -- agy-worker-mcp
 ```
 
 Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.agy]
-command = "node"
-args = ["/abs/path/to/agy-worker-mcp/dist/server.js"]
+command = "agy-worker-mcp"
 ```
+
+<details>
+<summary>From a clone instead</summary>
+
+```bash
+git clone https://github.com/thezoot3/agy-worker-mcp.git
+cd agy-worker-mcp
+npm install          # `prepare` builds dist/ for you
+claude mcp add agy --scope project -- node "$PWD/dist/server.js"
+```
+
+Registering by absolute path means the server runs whatever is in `dist/` —
+re-run `npm run build` after editing `src/`.
+</details>
+
+Check the registration with `claude mcp list`, and remove it with
+`claude mcp remove agy --scope project`.
 
 The server discovers the project root by walking up from its `cwd` to a git
 root, or honors `AGY_WORKER_PROJECT` as an override. Per-project state lives
-under `~/.agy-worker/projects/<hash>/` — never inside the project itself, so
-nothing here needs a `.gitignore` entry. `agy_capabilities` reports which
-root was actually discovered.
+under `~/.agy-worker/projects/<hash>/` — never inside your repository, so
+nothing here needs a `.gitignore` entry.
 
-## Tool surface
-
-Nine tools, described in full (with parameter-level detail) in each server's
-tool list — this is the map:
-
-| Tool | Role |
-| --- | --- |
-| `agy_start` | Start a job, return `job_id` immediately. `dry_run: true` resolves policy and argv without spending quota. |
-| `agy_wait` | Long-poll until the job **finishes** or `wait_ms` runs out — it does not return early on `queued`→`running` (`wait_ms: 0` = snapshot). Returns a compact judgement packet, not full logs. |
-| `agy_result` | Full, paged result: broker verdict, `agent_report`, `verification` (denials, environment blocks, artifacts). |
-| `agy_logs` | Raw or normalized event stream, by byte cursor or tail. The only way a client that did not start a job can see what it is doing. |
-| `agy_send` | Queue a follow-up turn on a `session_mode: "session"` job. Queues only — cannot interrupt a running turn. |
-| `agy_cancel` | Kill a running job and its whole process group. |
-| `agy_list_jobs` | Running and recently finished jobs in this project. |
-| `agy_sessions` | List, inspect, or close `agy` conversations. A session is one conversation; a job is one turn. |
-| `agy_capabilities` | Models, profiles, limits, discovered project root, server version. |
-
-## Recommended flow
+## Quick start
 
 ```
-agy_capabilities            -- see profiles, models, discovered root
-agy_start                   -- returns job_id immediately
-agy_wait (loop on cursor)   -- until lifecycle == "finished"
-agy_result                  -- verdict, verification, response text
-agy_logs                    -- only if you need the raw/normalized stream itself
+agy_capabilities                       -- profiles, models, discovered root
+agy_start { prompt, profile }          -- returns job_id immediately
+agy_wait  { job_id, wait_ms }          -- loop until lifecycle == "finished"
+agy_result { job_id, section }         -- verdict, verification, response text
+agy_logs  { job_id }                   -- only if you want the stream itself
 ```
+
+`agy_start` with `dry_run: true` resolves configuration and policy without
+spawning `agy`, so you can settle permissions before spending quota.
 
 When a job comes back `blocked`, `agy_result`'s
 `verification.permission_denials[].required_rule` is a rule string
 (e.g. `command(python -m pytest)`) — paste it into the next `agy_start`'s
-`permissions.allow` and retry. `verification.environment_blocks[].signature`
-explains a silent sandbox block such as a denied network lookup. Full detail
-in [`docs/03-permissions-and-sessions.md`](./docs/03-permissions-and-sessions.md).
+`permissions.allow` and retry.
+
+## Tools
+
+| Tool | Role |
+| --- | --- |
+| `agy_start` | Start a job, return `job_id` immediately. |
+| `agy_wait` | Long-poll until the job **finishes** or `wait_ms` runs out. Returns a compact judgement packet, not logs. |
+| `agy_result` | Full, paged result: broker verdict, agent self-report, verification. |
+| `agy_logs` | Raw or normalized event stream, by byte cursor or tail. |
+| `agy_send` | Queue a follow-up turn on a session-mode job. Cannot interrupt a running turn. |
+| `agy_cancel` | Kill a running job and its whole process group. |
+| `agy_list_jobs` | Running and recently finished jobs in this project. |
+| `agy_sessions` | List, inspect, or close `agy` conversations. |
+| `agy_capabilities` | Models, profiles, limits, discovered project root, server version. |
+
+Parameter-level detail, the `outcome` vocabulary, and the two "blocked" classes
+are in [`docs/tools.md`](./docs/tools.md).
 
 ## Permissions
 
-Two profiles ship in the MVP:
+Two profiles ship today:
 
-- **`research_readonly`** — read-only workspace access and shallow `git`
-  inspection. No writes, no interpreters, no network. Default profile.
-- **`general_worker`** — read/write inside the workspace, `git` and
-  `pytest`, network opt-in. `git push`, package installs, `rm`, and `sudo`
-  are hard-denied regardless of what a client requests.
+- **`research_readonly`** (default) — read-only workspace access and shallow
+  `git` inspection. No writes, no interpreters, no network.
+- **`general_worker`** — read/write inside the workspace, `git` and `pytest`,
+  network opt-in. `git push`, package installs, `rm`, and `sudo` are hard-denied
+  regardless of what a client requests.
 
-⚠ **`general_worker` is not a trust boundary.** Its `default_decision` is `ask`,
-which delegates to `agy`'s built-in engine, and that engine auto-approves under
-`proceed-in-sandbox` — so any shell command not on a deny list runs, and an
-allowed interpreter can write anywhere (`python3 -c "open('/tmp/x','w')"`).
-Shell redirection out of the workspace *is* blocked by the gate, and `agy`'s own
-`--sandbox` does **not** confine writes (measured — `docs/02` §4-c). Run
-untrusted prompts under `research_readonly`.
+Client-requested permissions can only **narrow** a profile: `allow` is
+intersected with the ceiling (rejections come back in `rejected_allow`), `deny`
+always wins.
 
-A client's `permissions.allow` can only narrow a profile's ceiling, never
-widen it — a request outside the ceiling comes back in the job's
-`rejected_allow` rather than silently failing. `permissions.deny` always
-wins. See [`docs/03-permissions-and-sessions.md`](./docs/03-permissions-and-sessions.md) §1.
+> ⚠ **`general_worker` is not a trust boundary.** Its `default_decision` is
+> `ask`, which delegates to `agy`'s own engine, and that engine auto-approves
+> under `proceed-in-sandbox` — so any shell command not on a deny list runs, and
+> an allowed interpreter can write anywhere. Shell redirection out of the
+> workspace *is* blocked by the gate, but `agy`'s `--sandbox` does **not**
+> confine writes (measured). Run untrusted prompts under `research_readonly`.
+
+Full model — evaluation order, containment, denial recovery, sessions and locks
+— in [`docs/permissions.md`](./docs/permissions.md).
+
+## Documentation
+
+- [`docs/tools.md`](./docs/tools.md) — the nine tools, parameter by parameter,
+  and the result vocabulary
+- [`docs/permissions.md`](./docs/permissions.md) — profiles, gate, containment,
+  denial recovery, sessions
+- [`docs/operations.md`](./docs/operations.md) — state layout, lifecycle, locks,
+  timeouts, retention, test suites
 
 ## Development
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run, against test/fake-agy — never the real agy binary
+npm test            # vitest, against test/fake-agy — never the real agy binary
 npm run build       # emits dist/server.js, dist/runner.js, dist/gate.js
 ```
 
-`npm test` runs exclusively against the scripted fake in
-[`test/fake-agy/`](./test/fake-agy); the real `agy` CLI is never invoked by it or
-by CI, since every invocation spends real quota.
-
-The real binary is exercised only by the separate live suite, which is opt-in
-twice over — its files are `*.live.ts` (the default config only collects
-`*.test.ts`) and every test skips without `AGY_LIVE=1`:
+`npm test` and CI run exclusively against the scripted fake in
+[`test/fake-agy/`](./test/fake-agy); the real `agy` CLI is never invoked there,
+since every invocation spends real quota. The real binary is exercised only by
+the opt-in live suite:
 
 ```bash
 npm run test:live   # spends real agy quota
 ```
 
-What it verifies, and which design assumptions it has already overturned, is in
-[`docs/05-live-verification.md`](./docs/05-live-verification.md).
+## License
+
+MIT
