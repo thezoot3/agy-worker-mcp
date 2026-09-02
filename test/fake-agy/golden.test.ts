@@ -1,9 +1,10 @@
 /**
  * Contract drift guard for the fake agy.
  *
- * `.spike/out/run1.events.ndjson` and `.spike/out/run6.events.ndjson` are raw
- * output from the real `agy` 1.1.23. If the fake ever stops producing the same
- * *shape* — same event order, same field sets, same types — then every test built
+ * `test/fixtures/agy-1.1.23/*.events.ndjson` are raw output from the real `agy`
+ * 1.1.23 (only the local workspace path was rewritten). If the fake ever stops
+ * producing the same *shape* — same event order, same field sets, same types —
+ * then every test built
  * on it is testing a fiction, and the failure would only surface against the real
  * binary. Values are free to differ; structure is not.
  */
@@ -20,9 +21,11 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..')
 const FAKE = join(HERE, 'agy.mjs')
 
+const FIXTURES = join(REPO, 'test', 'fixtures', 'agy-1.1.23')
+
 const GOLDEN = {
-  happy: join(REPO, '.spike', 'out', 'run1.events.ndjson'),
-  'hook-denied': join(REPO, '.spike', 'out', 'run6.events.ndjson'),
+  happy: join(FIXTURES, 'happy.events.ndjson'),
+  'hook-denied': join(FIXTURES, 'hook-denied.events.ndjson'),
 } as const
 
 const tempDirs: string[] = []

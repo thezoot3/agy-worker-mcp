@@ -5,7 +5,7 @@ nothing in `src/` can tell the difference.
 
 Never run the real `agy` in tests — it costs quota. Everything here is
 transcribed from `docs/02-agy-cli-findings.md` and the raw captures in
-`.spike/out/`; `golden.test.ts` fails if the shapes ever drift apart.
+`test/fixtures/agy-1.1.23/`; `golden.test.ts` fails if the shapes ever drift apart.
 
 ## Choosing a scenario
 
