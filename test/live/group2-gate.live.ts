@@ -72,7 +72,7 @@ live('L4 — our gate binds a real agy conversation and its denial survives exit
     const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
       broker_summary?: unknown
       agent_status?: string | null
-      verification?: { permission_denials?: unknown[] }
+      verification?: { blockers?: Array<{ source: string }> }
     }
     const session = getSession(ctx.store, started.session_id)
     const { jobPaths } = await import('../../src/contract/paths.js')
@@ -92,7 +92,7 @@ live('L4 — our gate binds a real agy conversation and its denial survives exit
           outcome: waited.outcome,
             broker_summary: full.broker_summary,
           agent_status: full.agent_status,
-          denials: full.verification?.permission_denials,
+          blockers: full.verification?.blockers,
           conversation_id: session?.conversation_id,
           hooks_json: readOr(join(project.root, '.agents', 'hooks.json')),
           gate_log: readOr(jp.gateLog).slice(0, 3000),
@@ -110,7 +110,7 @@ live('L4 — our gate binds a real agy conversation and its denial survives exit
     // whole daemon-less binding claim (docs/01 결정 5, docs/03 §1.4).
     expect(session?.conversation_id).toBeTruthy()
     expect(waited.lifecycle).toBe('finished')
-    expect(full.verification?.permission_denials?.length ?? 0).toBeGreaterThan(0)
+    expect((full.verification?.blockers ?? []).filter((b) => b.source === 'gate').length).toBeGreaterThan(0)
     expect(waited.outcome).toBe('blocked')
 
     ctx.store.close()

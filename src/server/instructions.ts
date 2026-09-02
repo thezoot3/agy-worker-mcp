@@ -34,14 +34,18 @@ Two things that will mislead you if you forget them
      as a lesser success.
 
 When a job is blocked
-  agy_result -> verification.permission_denials[].required_rule is a rule
-  string, e.g. "command(python -m pytest)". Put it into the next agy_start's
-  permissions.allow and retry. allow is intersected with the profile ceiling,
-  so a rejected entry comes back in rejected_allow rather than failing
-  silently — check that before assuming the retry will work.
-  verification.environment_blocks[].signature explains a silent sandbox
-  failure such as a blocked DNS lookup (network is denied by default; ask for
-  permissions.network: "allow" on a profile that permits opting in).
+  agy_result -> verification.blockers[] is one list of everything that stood
+  in the way. Read two fields first: "actionable" says whether a different
+  agy_start can lift it, and "remedy" says what to change (a rule string like
+  "command(python -m pytest)" for our gate, permissions.network: "allow" for a
+  blocked DNS lookup). actionable: false means no permissions.allow rule will
+  help — agy's own permission engine refused, or the command tried to leave
+  the workspace. "source" says who refused: policy_ceiling, gate, agy_engine,
+  sandbox, broker, tool_error.
+  agy_start reports the same shape before a job runs: its policy_summary and
+  blockers[] tell you if the ceiling rejected your permissions.allow. Note
+  allow_count: 0 — a fully rejected request drops the profile's own defaults
+  with it, and the fix is to start again with no permissions.allow at all.
 
 What is not possible
   You cannot interrupt or redirect a turn that is already running. agy_send

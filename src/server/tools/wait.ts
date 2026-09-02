@@ -96,13 +96,9 @@ export async function handleWait(ctx: ToolContext, input: WaitInput): Promise<To
       duration_ms: job.started_at !== null ? Date.now() - job.started_at : null,
       agent_status: job.agent_status,
       contract_status: job.contract_status,
-      counts: {
-        permission_denials: 0,
-        environment_blocks: 0,
-        missing_artifacts: 0,
-        tool_errors: 0,
-        turns: 0,
-      },
+      // Nothing is judged until the job finalizes; zeros here mean "not
+      // computed yet", which `lifecycle !== 'finished'` already says.
+      counts: { blockers: 0, actionable: 0, tool_errors: 0, turns: 0 },
       warnings: [],
       log_tail: tail,
       cursor: read.nextCursor,

@@ -38,7 +38,12 @@ beforeEach(() => {
 
 interface Ran {
   outcome: string
-  denials: Array<{ policy?: string | null; required_rule?: string | null; message?: string }>
+  blockers: Array<{
+    source?: string
+    remedy?: string | null
+    message?: string
+    detail?: { policy?: string | null }
+  }>
   logTail: string[]
 }
 
@@ -68,12 +73,12 @@ async function run(prompt: string, profile: string, label: string): Promise<Ran>
 
   const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
     broker_summary?: { log_tail?: string[] }
-    verification?: { permission_denials?: Ran['denials'] }
+    verification?: { blockers?: Ran['blockers'] }
   }
   ctx.store.close()
   return {
     outcome: waited.outcome,
-    denials: full.verification?.permission_denials ?? [],
+    blockers: full.verification?.blockers ?? [],
     logTail: full.broker_summary?.log_tail ?? [],
   }
 }
@@ -95,7 +100,7 @@ live('L14 — the measured escape is closed', () => {
     console.log('[L14]', JSON.stringify({ ...r, landed_outside: existsSync(OUTSIDE) }, null, 1).slice(0, 2000))
 
     expect(existsSync(OUTSIDE)).toBe(false)
-    expect(r.denials.some((d) => d.policy === 'containment')).toBe(true)
+    expect(r.blockers.some((b) => b.source === 'gate' && b.detail?.policy === 'containment')).toBe(true)
     expect(r.outcome).toBe('blocked')
   })
 })
@@ -112,7 +117,7 @@ live('L15 — ordinary work still runs', () => {
     console.log('[L15]', JSON.stringify(r, null, 1).slice(0, 2000))
 
     // The containment stage must not have fired for an in-workspace redirect.
-    expect(r.denials.some((d) => d.policy === 'containment')).toBe(false)
+    expect(r.blockers.some((b) => b.detail?.policy === 'containment')).toBe(false)
     expect(existsSync(`${project.root}/note.txt`)).toBe(true)
   })
 })

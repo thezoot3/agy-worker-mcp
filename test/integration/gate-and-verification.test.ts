@@ -88,7 +88,7 @@ describe('#12 — the gate answers "ask" (never {}) for a conversation that is n
 })
 
 describe('#13 — a Class 1 (structured) denial is visible even though agy exits 0 / reports SUCCESS', () => {
-  it('verification.permission_denials records it, with the gate reason round-tripping as required_rule-ish text', async () => {
+  it('verification.blockers records it as an actionable source:"gate" entry, and the packet says blocked', async () => {
     applyEnv(project, 'hook-denied')
     mkdirSync(project.root, { recursive: true })
     installExtraDenyGate(
@@ -110,19 +110,28 @@ describe('#13 — a Class 1 (structured) denial is visible even though agy exits
       lifecycle: string
       exit_code: number
       agent_status: string
+      outcome: string
+      counts: { blockers: number; actionable: number }
+      headline: string
     }
     expect(waited.lifecycle).toBe('finished')
     // Measured, docs/02 §9: a hook denial is still exit 0 / status SUCCESS.
     expect(waited.exit_code).toBe(0)
     expect(waited.agent_status).toBe('SUCCESS')
+    // The packet's own invariant: a blocker our gate authored carries
+    // blocks_outcome, so it must always come with outcome "blocked" — never
+    // with a success. The headline names who refused.
+    expect(waited.counts.blockers).toBeGreaterThanOrEqual(1)
+    expect(waited.outcome).toBe('blocked')
+    expect(waited.headline).toContain('gate denial')
 
     const verification = replyJson(
       await handleResult(ctx, { job_id: started.job_id, section: 'verification' } as never),
-    ) as { verification: { permission_denials: Array<{ tool: string; message: string }> } }
-    expect(verification.verification.permission_denials.length).toBeGreaterThanOrEqual(1)
-    expect(verification.verification.permission_denials[0]!.message).toContain(
-      'tool call denied by pre-tool hook:',
-    )
+    ) as { verification: { blockers: Array<{ source: string; actionable: boolean; message: string }> } }
+    const gateBlockers = verification.verification.blockers.filter((b) => b.source === 'gate')
+    expect(gateBlockers.length).toBeGreaterThanOrEqual(1)
+    expect(gateBlockers[0]!.actionable).toBe(true)
+    expect(gateBlockers[0]!.message).toContain('tool call denied by pre-tool hook:')
 
     ctx.store.close()
   })
@@ -151,9 +160,11 @@ describe('#14 — a Class 2 (silent environment) block is detected even though s
 
     const verification = replyJson(
       await handleResult(ctx, { job_id: started.job_id, section: 'verification' } as never),
-    ) as { verification: { environment_blocks: Array<{ signature: string }> } }
-    expect(verification.verification.environment_blocks.length).toBe(1)
-    expect(verification.verification.environment_blocks[0]!.signature).toBe('Could not resolve host')
+    ) as { verification: { blockers: Array<{ source: string; detail?: { signature?: string } }> } }
+    const sandboxBlockers = verification.verification.blockers.filter((b) => b.source === 'sandbox')
+    expect(sandboxBlockers.length).toBe(1)
+    // The original Class 2 record survives verbatim under `detail`.
+    expect(sandboxBlockers[0]!.detail?.signature).toBe('Could not resolve host')
 
     ctx.store.close()
   })

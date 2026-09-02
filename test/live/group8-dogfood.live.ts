@@ -143,7 +143,7 @@ live('L16 — general_worker: a real small edit, verified via expected_artifacts
       agent_report?: { response?: { text?: string } }
       verification?: {
         expected_artifacts?: Array<{ path: string; absolute: string; exists: boolean; size: number | null }>
-        permission_denials?: Array<{ required_rule: string | null; policy: string | null }>
+        blockers?: Array<{ source: string; actionable: boolean; remedy: string | null }>
       }
     }
 
@@ -165,7 +165,7 @@ live('L16 — general_worker: a real small edit, verified via expected_artifacts
           outcome: waited.outcome,
           headline: full.broker_summary?.headline,
           expected_artifacts: full.verification?.expected_artifacts,
-          permission_denials: full.verification?.permission_denials,
+          blockers: full.verification?.blockers,
           on_disk_exists: onDiskExists,
           response_text: full.agent_report?.response?.text,
         },

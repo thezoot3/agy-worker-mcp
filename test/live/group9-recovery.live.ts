@@ -78,22 +78,30 @@ live('L17 — required_rule from a denial, fed back into permissions.allow, actu
 
     const full1 = replyJson(await handleResult(ctx, { job_id: started1.job_id, section: 'all' } as never)) as {
       verification?: {
-        permission_denials?: Array<{ required_rule: string | null; policy: string | null; command: string | null }>
+        blockers?: Array<{
+          source: string
+          actionable: boolean
+          remedy: string | null
+          command: string | null
+          detail?: { policy?: string | null }
+        }>
       }
     }
 
     // eslint-disable-next-line no-console
     console.log(
       '[L17 turn1]',
-      JSON.stringify({ outcome: waited1.outcome, denials: full1.verification?.permission_denials }, null, 1),
+      JSON.stringify({ outcome: waited1.outcome, blockers: full1.verification?.blockers }, null, 1),
     )
 
     expect(waited1.lifecycle).toBe('finished')
     expect(waited1.outcome).toBe('blocked')
-    const denial = full1.verification?.permission_denials?.[0]
+    const denial = full1.verification?.blockers?.find((b) => b.source === 'gate')
     expect(denial).toBeDefined()
-    expect(denial?.policy).toBe('default')
-    const requiredRule = denial?.required_rule ?? null
+    expect(denial?.detail?.policy).toBe('default')
+    expect(denial?.actionable).toBe(true)
+    // `remedy` on a gate blocker is exactly the rule to put into permissions.allow.
+    const requiredRule = denial?.remedy ?? null
     expect(requiredRule).not.toBeNull()
 
     // Turn 2 — same prompt, widened with exactly the required_rule the broker
@@ -120,7 +128,7 @@ live('L17 — required_rule from a denial, fed back into permissions.allow, actu
 
     const full2 = replyJson(await handleResult(ctx, { job_id: started2.job_id, section: 'all' } as never)) as {
       broker_summary?: { headline?: string }
-      verification?: { permission_denials?: unknown[] }
+      verification?: { blockers?: Array<{ source: string }> }
     }
 
     // eslint-disable-next-line no-console
@@ -131,7 +139,7 @@ live('L17 — required_rule from a denial, fed back into permissions.allow, actu
           required_rule_used: requiredRule,
           outcome: waited2.outcome,
           headline: full2.broker_summary?.headline,
-          denials: full2.verification?.permission_denials,
+          blockers: full2.verification?.blockers,
         },
         null,
         1,
@@ -139,7 +147,7 @@ live('L17 — required_rule from a denial, fed back into permissions.allow, actu
     )
 
     expect(waited2.lifecycle).toBe('finished')
-    expect(full2.verification?.permission_denials?.length ?? 0).toBe(0)
+    expect((full2.verification?.blockers ?? []).filter((b) => b.source === 'gate').length).toBe(0)
     expect(waited2.outcome).not.toBe('blocked')
 
     ctx.store.close()

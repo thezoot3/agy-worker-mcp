@@ -5,6 +5,7 @@ import { isAbsolute, join } from 'node:path'
 import type {
   AgyEvent,
   ArtifactCheck,
+  Blocker,
   ContractStatus,
   JobRow,
   Verification,
@@ -13,6 +14,12 @@ import { canonicalize, containedOrNull } from '../contract/paths.js'
 import { scanDenials } from '../events/detect.js'
 import type { Store } from '../store/db.js'
 import { now } from '../store/db.js'
+import {
+  blockerFromDenial,
+  blockerFromEnvironmentBlock,
+  blockerFromMissingArtifact,
+  renderBlockers,
+} from './blockers.js'
 
 /**
  * Independent checks the broker runs on its own, without asking agy anything.
@@ -39,42 +46,23 @@ export function verifyJob(_store: Store, input: VerifyInput): Verification {
   const changed = changedFiles(input.cwd)
   const contractStatus = checkContract(input.structuredOutput, input.jsonSchemaPath ?? null)
 
-  const warnings: string[] = []
-  for (const d of denials.permission_denials) {
-    // Only `source === 'gate'` is a confirmed refusal (the HOOK_DENIAL_PREFIX
-    // marker we authored ourselves) — every other `step_type: 'tool', state:
-    // 'ERROR'` event is an ordinary tool failure (a failing test, a missing
-    // file) that `detectClass1` cannot tell apart from a denial by shape alone
-    // (finding 17). Wording it as "permission denied" for those would mislead
-    // the calling agent into widening `permissions.allow` for a problem that
-    // has nothing to do with permissions.
-    if (d.source === 'gate') {
-      warnings.push(
-        `permission denied: ${d.tool}${d.command ? ` (${d.command})` : ''}` +
-          (d.required_rule ? ` — required_rule: ${d.required_rule}` : ''),
-      )
-    } else {
-      warnings.push(
-        `tool error (not necessarily a permission issue): ${d.tool}${d.command ? ` (${d.command})` : ''} — ${d.message}`,
-      )
-    }
-  }
-  for (const b of denials.environment_blocks) {
-    warnings.push(
-      `environment block: ${b.tool}${b.command ? ` (${b.command})` : ''} — signature "${b.signature}"`,
-    )
-  }
-  const missing = artifacts.filter((a) => !a.exists)
-  for (const m of missing) {
-    warnings.push(`expected artifact missing: ${m.path}`)
-  }
+  // One list, one vocabulary. Which of these force `outcome: 'blocked'` and
+  // which are only reported is decided in `blockers.ts` and nowhere else.
+  const blockers: Blocker[] = [
+    ...denials.permission_denials.map(blockerFromDenial),
+    ...denials.environment_blocks.map(blockerFromEnvironmentBlock),
+    ...artifacts.filter((a) => !a.exists).map(blockerFromMissingArtifact),
+  ]
+
+  const warnings = renderBlockers(blockers)
   if (contractStatus === 'violated') {
+    // Not a blocker: `checkContract` never returns 'violated' on measured
+    // evidence (see below), so there is nothing here we could claim to confirm.
     warnings.push('structured output did not honour the requested --json-schema')
   }
 
   return {
-    permission_denials: denials.permission_denials,
-    environment_blocks: denials.environment_blocks,
+    blockers,
     expected_artifacts: artifacts,
     changed_files: changed,
     warnings,

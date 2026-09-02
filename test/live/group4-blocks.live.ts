@@ -81,7 +81,7 @@ live('L10 — a sandboxed network command: which signature does agy actually sur
     const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
       broker_summary?: unknown
       agent_status?: string | null
-      verification?: { environment_blocks?: unknown[]; permission_denials?: unknown[] }
+      verification?: { blockers?: unknown[] }
     }
     // eslint-disable-next-line no-console
     console.log(
@@ -91,8 +91,7 @@ live('L10 — a sandboxed network command: which signature does agy actually sur
           outcome: waited.outcome,
           broker_summary: full.broker_summary,
           agent_status: full.agent_status,
-          environment_blocks: full.verification?.environment_blocks,
-          permission_denials: full.verification?.permission_denials,
+          blockers: full.verification?.blockers,
           known_signatures: ENVIRONMENT_BLOCK_SIGNATURES,
           steps: toolSteps(events),
         },
@@ -137,7 +136,7 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
     const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
       broker_summary?: unknown
       agent_status?: string | null
-      verification?: { environment_blocks?: unknown[]; permission_denials?: unknown[] }
+      verification?: { blockers?: unknown[] }
     }
     // eslint-disable-next-line no-console
     console.log(
@@ -149,8 +148,7 @@ live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
           outcome: waited.outcome,
           broker_summary: full.broker_summary,
           agent_status: full.agent_status,
-          environment_blocks: full.verification?.environment_blocks,
-          permission_denials: full.verification?.permission_denials,
+          blockers: full.verification?.blockers,
           steps: toolSteps(events),
         },
         null,

@@ -138,7 +138,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
 
   register(
     'agy_start',
-    'Begin a new agy job. Returns job_id immediately; never blocks. Use dry_run to resolve config and policy without spawning agy or spending quota.',
+    'Begin a new agy job. Returns job_id immediately; never blocks — plus policy_summary and blockers[] for what the profile ceiling did to your permissions request. Use dry_run to resolve config and policy without spawning agy or spending quota.',
     startInput.shape,
     handleStart,
   )
@@ -150,7 +150,7 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
   )
   register(
     'agy_result',
-    'Full, paged result of a finished job: broker summary, agent self-report, and verification (permission_denials[].required_rule, environment_blocks[].signature).',
+    'Full, paged result of a finished job: broker summary, agent self-report, and verification (blockers[] with source / actionable / remedy for each thing that stood in the way).',
     resultInput.shape,
     handleResult,
   )

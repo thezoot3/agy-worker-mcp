@@ -5,6 +5,7 @@ import type {
   Outcome,
   Verification,
 } from '../contract/types.js'
+import { hasOutcomeBlocker, summarizeBlockers } from './blockers.js'
 
 /**
  * Decide `outcome` and `headline` — the broker's verdict, kept strictly separate
@@ -66,25 +67,6 @@ export function decideOutcome(input: OutcomeInput): OutcomeDecision {
   }
 }
 
-/**
- * Only a `source: 'gate'` Class 1 event is a confirmed refusal (it carries our
- * own `HOOK_DENIAL_PREFIX` marker). `detectClass1` cannot otherwise
- * distinguish an actual permission denial from an ordinary failing tool call
- * (a failing test, a missing file) — counting every Class 1 event as a block
- * would report normal task failures as `blocked` (finding 17).
- */
-function confirmedDenialCount(v: Verification): number {
-  return v.permission_denials.filter((d) => d.source === 'gate').length
-}
-
-function hasBlock(v: Verification): boolean {
-  return confirmedDenialCount(v) > 0 || v.environment_blocks.length > 0
-}
-
-function hasMissingArtifact(v: Verification): boolean {
-  return v.expected_artifacts.some((a) => !a.exists)
-}
-
 function computeOutcome(input: OutcomeInput): Outcome {
   if (input.canceled) return 'canceled'
   if (input.timedOut) return 'timed_out'
@@ -95,8 +77,12 @@ function computeOutcome(input: OutcomeInput): Outcome {
   const agentFailed = input.agentStatus === 'ERROR'
   if (exitFailed || agentFailed) return 'failed'
 
-  const blocked = hasBlock(input.verification) || hasMissingArtifact(input.verification)
-  if (blocked) return 'blocked'
+  // One predicate, defined once in `blockers.ts`. A gate denial, a Class 2
+  // sandbox block and a missing expected artifact all carry
+  // `blocks_outcome: true`; an agy-engine refusal and a plain tool error do
+  // not, exactly as before — but the rule now lives in one place instead of
+  // three special cases here.
+  if (hasOutcomeBlocker(input.verification.blockers)) return 'blocked'
 
   if (input.hadExpectations) return 'verified_success'
   return 'success_unverified'
@@ -113,23 +99,25 @@ export function isVerifiedSuccess(input: OutcomeInput): boolean {
  * paraphrase of agy's own response text.
  */
 export function buildHeadline(outcome: Outcome, input: OutcomeInput): string {
-  const v = input.verification
-  const denials = confirmedDenialCount(v)
-  const blocks = v.environment_blocks.length
-  const missing = v.expected_artifacts.filter((a) => !a.exists).length
-  const totalArtifacts = v.expected_artifacts.length
+  const blockers = input.verification.blockers
+  const totalArtifacts = input.verification.expected_artifacts.length
+
+  // Blockers that did not force the verdict are still worth a fragment: an
+  // agy-engine refusal is invisible everywhere else in the packet, and staying
+  // silent about it in a success headline is how a half-done job reads as done.
+  // It is a fragment, never the verdict.
+  const nonBlocking = blockers.filter((b) => !b.blocks_outcome)
+  const nonBlockingSuffix =
+    nonBlocking.length > 0 ? ` (non-blocking: ${summarizeBlockers(nonBlocking)})` : ''
 
   switch (outcome) {
     case 'verified_success':
-      return `verified success: exit 0, agy reported ${input.agentStatus}, ${totalArtifacts} expected artifact(s) confirmed, no permission or environment blocks.`
+      return `verified success: exit 0, agy reported ${input.agentStatus}, ${totalArtifacts} expected artifact(s) confirmed, no permission or environment blocks.${nonBlockingSuffix}`
     case 'success_unverified':
-      return `agy exited 0 and reported ${input.agentStatus}, but nothing verifiable (expected_artifacts or a json_schema) was requested — cannot confirm the work actually happened.`
+      return `agy exited 0 and reported ${input.agentStatus}, but nothing verifiable (expected_artifacts or a json_schema) was requested — cannot confirm the work actually happened.${nonBlockingSuffix}`
     case 'blocked': {
-      const parts: string[] = []
-      if (denials > 0) parts.push(`${denials} permission denial(s)`)
-      if (blocks > 0) parts.push(`${blocks} environment block(s)`)
-      if (missing > 0) parts.push(`${missing} of ${totalArtifacts} expected artifact(s) missing`)
-      return `blocked despite exit ${input.exitCode ?? '?'} / status ${input.agentStatus}: ${parts.join(', ')}.`
+      const blocking = blockers.filter((b) => b.blocks_outcome)
+      return `blocked despite exit ${input.exitCode ?? '?'} / status ${input.agentStatus}: ${summarizeBlockers(blocking)}.${nonBlockingSuffix}`
     }
     case 'failed':
       return input.agentStatus === 'ERROR'

@@ -15,6 +15,7 @@ import {
   writeJsonAtomic,
 } from '../../contract/paths.js'
 import type { EffectiveConfig, JobRequest } from '../../contract/types.js'
+import { describePolicy } from '../../broker/blockers.js'
 import { cleanupOldJobs, reconcile } from '../../broker/reconcile.js'
 import { getProfile, resolvePolicy } from '../../policy/profiles.js'
 import { appendUserTurn } from '../../runner/inbox.js'
@@ -271,8 +272,23 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       created_at: now,
     }
 
+    // Same three fields on both replies, from one builder: what the policy
+    // ended up as, what the request lost on the way there, and that rendered
+    // for a caller who reads prose. A rejected `permissions.allow` collapses
+    // the effective allow list to empty — profile defaults included — which is
+    // the trap this reports (see policyCeilingBlockers).
+    const described = describePolicy(policy)
+
     if (input.dry_run) {
-      return reply({ dry_run: true, job_id: jobId, session_id: sessionId, effective_config: effectiveConfig })
+      return reply({
+        dry_run: true,
+        job_id: jobId,
+        session_id: sessionId,
+        policy_summary: described.policy_summary,
+        blockers: described.blockers,
+        warnings: described.warnings,
+        effective_config: effectiveConfig,
+      })
     }
 
     // Locks first (`docs/01` 결정 4): a lost race must leave nothing behind, and
@@ -345,6 +361,9 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       session_mode: sessionMode,
       deadline_at: deadlineAt,
       idle_timeout_ms: idleTimeoutMs,
+      policy_summary: described.policy_summary,
+      blockers: described.blockers,
+      warnings: described.warnings,
       dry_run: false,
     })
   } catch (e) {

@@ -16,6 +16,17 @@
 /** Bumped whenever `schema.sql` changes shape. Stored in `meta.schema_version`. */
 export const SCHEMA_VERSION = 1
 
+/**
+ * Shape version of `jobs/<id>/broker-result.json`, independent of the SQLite
+ * `SCHEMA_VERSION` (that file is not a table).
+ *
+ * 1 → 2: `verification.permission_denials` + `verification.environment_blocks`
+ * became the single `verification.blockers` list. `loadBrokerResult` migrates a
+ * version-1 file in memory rather than failing, so a job directory written by
+ * 0.1.0 stays readable; an unknown *newer* version is refused loudly instead.
+ */
+export const BROKER_RESULT_VERSION = 2
+
 /** Environment variables this package reads. Nothing else may be consulted. */
 export const ENV = {
   /** Overrides project-root discovery (`docs/01` decision 2). */
@@ -65,6 +76,39 @@ export const ENVIRONMENT_BLOCK_SIGNATURES: readonly string[] = [
   'Operation not permitted',
   'Read-only file system',
   'EACCES',
+]
+
+/**
+ * The subset of {@link ENVIRONMENT_BLOCK_SIGNATURES} that means "the sandbox
+ * refused the network", which is the one Class 2 block a caller can actually do
+ * something about (`permissions.network: "allow"`, on a profile that permits
+ * opting in). Every other signature is a filesystem or capability refusal by
+ * agy's sandbox, which we cannot lift at all.
+ */
+export const NETWORK_BLOCK_SIGNATURES: readonly string[] = [
+  'Could not resolve host',
+  'Temporary failure in name resolution',
+  'Connection refused',
+]
+
+/**
+ * Substrings that identify a refusal by agy's **own** permission engine, as
+ * opposed to our gate.
+ *
+ * Both entries are verbatim fragments of a measured message; the observed line
+ * was:
+ *
+ * `permission check failed for unsandboxed "ls -la /Users/<user>/.jdks/": user
+ * denied permission to run command:\nls -la /Users/<user>/.jdks/`
+ *
+ * These refusals are not ours and no `permissions.allow` rule can lift them —
+ * the gate never saw the call. Matching them only changes how the warning is
+ * worded, never the outcome (they arrive as ordinary `state: 'ERROR'` tool
+ * steps, which `decideOutcome` deliberately does not count as blocks).
+ */
+export const AGY_ENGINE_REFUSAL_SIGNATURES: readonly string[] = [
+  'user denied permission to run command',
+  'permission check failed for unsandboxed',
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -416,6 +460,28 @@ export interface EffectivePolicy {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Exactly the JSON agy writes to the hook's stdin. */
+/**
+ * What `agy_start` tells the caller about the policy it just resolved.
+ *
+ * `agy_start`'s non-dry_run reply used to carry no policy information at all,
+ * so a caller whose `permissions.allow` was rejected wholesale could not tell
+ * (observed: a request of three build commands collapsed `allow` to `[]`,
+ * silently dropping the profile's own defaults too). Both replies carry this
+ * now, alongside `warnings` built by the same function.
+ */
+export interface PolicySummary {
+  profile: Profile
+  /**
+   * Size of the effective `allow` list. `0` means nothing is explicitly
+   * allowed — including the profile's own defaults, which a rejected
+   * `permissions.allow` request silently takes with it. Rejected entries are
+   * reported as `source: 'policy_ceiling'` blockers, not here.
+   */
+  allow_count: number
+  network: NetworkPolicy
+  default_decision: 'ask' | 'deny'
+}
+
 export interface GatePayload {
   conversationId: string
   stepIdx?: number
@@ -646,14 +712,84 @@ export interface ArtifactCheck {
   size: number | null
 }
 
-/** Written to `jobs/<id>/verification.json`. Facts only. */
+/**
+ * Where a refusal came from. The one axis that decides what a caller should do
+ * next, so every judgement surface (outcome, counts, warnings, `agy_start`'s own
+ * reply) is derived from this and nothing else. The authoritative
+ * source → (`actionable`, `remedy`, `blocks_outcome`) table lives in
+ * `src/broker/blockers.ts`; do not re-derive it anywhere.
+ */
+export type BlockerSource =
+  /** A requested `permissions.allow` entry the profile ceiling refused. Pre-flight, from `resolvePolicy`. */
+  | 'policy_ceiling'
+  /** Our own PreToolUse gate refused the call. The only refusal we can confirm. */
+  | 'gate'
+  /** agy's own permission engine refused, outside our policy entirely (measured wording). */
+  | 'agy_engine'
+  /** agy's sandbox blocked it silently — a Class 2 signature match. */
+  | 'sandbox'
+  /** A broker-side check failed: a missing `expected_artifacts` entry. */
+  | 'broker'
+  /**
+   * An ordinary failing tool call carrying no refusal signature at all.
+   *
+   * Not one of the five refusal sources — it exists because a non-gate
+   * `state: 'ERROR'` step is indistinguishable from a real denial by shape
+   * (finding 17), and dropping those events would lose their message entirely.
+   * Never actionable through permissions, never `blocks_outcome`.
+   */
+  | 'tool_error'
+
+/**
+ * One thing that stood between the job and `verified_success` — or, for
+ * `policy_ceiling`, between the request and the job it asked for.
+ *
+ * This is deliberately the same vocabulary as an error envelope
+ * (`detail` + `remedy`, `contract/errors.ts`): a caller reads `actionable` to
+ * decide whether retrying differently can possibly help, and `remedy` for what
+ * to change. When nothing can help, `remedy` is null and `message` says why.
+ */
+export interface Blocker {
+  source: BlockerSource
+  /** Whether changing the next `agy_start` can lift this. */
+  actionable: boolean
+  /** What to change. Null when nothing will help — the reason is in `message`. */
+  remedy: string | null
+  /**
+   * Whether this forces `outcome: 'blocked'`. True only for refusals we
+   * confirmed ourselves (`gate`, `sandbox`, `broker`); an `agy_engine` or
+   * `tool_error` entry cannot be told apart from an ordinary command failure,
+   * and reporting those as `blocked` would call every failing test a block.
+   */
+  blocks_outcome: boolean
+  tool: string | null
+  command: string | null
+  /** Human-readable, and carrying the measured message verbatim where there is one. */
+  message: string
+  /**
+   * The full original record this was derived from — a `DenialClass1`,
+   * `DenialClass2`, `ArtifactCheck`, or the rejected rule string. Nothing the
+   * pre-0.1.1 `permission_denials` / `environment_blocks` lists carried
+   * (`required_rule`, `signature`, `policy`, `step_idx`, …) is dropped.
+   */
+  detail?: Record<string, unknown>
+}
+
+/**
+ * Written to `jobs/<id>/verification.json`. Facts only.
+ *
+ * `blockers` replaced the separate `permission_denials` / `environment_blocks`
+ * lists in `BROKER_RESULT_VERSION` 2: the caller's real question is "who
+ * refused, and can I fix it", which the split lists made them reassemble by
+ * hand — and got wrong, since a non-gate tool error sat in a list named
+ * `permission_denials` while never counting as a denial anywhere else.
+ */
 export interface Verification {
-  permission_denials: DenialClass1[]
-  environment_blocks: DenialClass2[]
+  blockers: Blocker[]
   expected_artifacts: ArtifactCheck[]
   /** `git status --porcelain` inside the workspace, when it is a repo. */
   changed_files: string[]
-  /** Non-fatal observations that block `verified_success`. */
+  /** Rendered `blockers`, plus non-blocker observations (an idle-closed session). */
   warnings: string[]
   contract_status: ContractStatus
   checked_at: number
@@ -731,10 +867,22 @@ export interface JudgementPacket {
   agent_status: AgentStatus | null
   contract_status: ContractStatus | null
   counts: {
-    permission_denials: number
-    environment_blocks: number
-    missing_artifacts: number
+    /**
+     * Size of `verification.blockers`. The packet stays a verdict, not a
+     * report: the per-item detail (source, remedy, verbatim message) is one
+     * `agy_result({ section: "verification" })` away.
+     *
+     * Invariant, for a job that actually ran to a conclusion (i.e. not
+     * `canceled` / `timed_out` / `failed`, which outrank verification in
+     * `decideOutcome`'s precedence): `outcome === 'blocked'` ⟺ some blocker
+     * has `blocks_outcome: true`. Both sides are computed from the same list.
+     */
+    blockers: number
+    /** How many of those a different `agy_start` could lift (`actionable: true`). */
+    actionable: number
+    /** Every `step_type: 'tool'`, `state: 'ERROR'` step in the raw stream. */
     tool_errors: number
+    /** `result` events, i.e. completed turns. */
     turns: number
   }
   warnings: string[]

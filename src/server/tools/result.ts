@@ -9,10 +9,12 @@ import { errorReply, reply, type ToolContext, type ToolReply } from '../context.
 /**
  * `agy_result` — the full, paged result of a finished job.
  *
- * This is where the recovery loop lives: `verification.permission_denials[].required_rule`
- * goes straight into the next `agy_start`'s `permissions.allow`, and
- * `verification.environment_blocks[].signature` explains a silent sandbox failure
- * that agy reported as SUCCESS.
+ * This is where the recovery loop lives: `verification.blockers[]` carries one
+ * entry per thing that stood in the way, each with `actionable` (can a
+ * different `agy_start` lift it) and `remedy` (what to change) — a gate
+ * denial's `required_rule` for `permissions.allow`, `permissions.network` for
+ * a silent sandbox network block that agy reported as SUCCESS. The original
+ * record behind each entry is kept verbatim in `detail`.
  */
 export const resultInput = z.object({
   job_id: z.string(),
