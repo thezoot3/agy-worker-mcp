@@ -26,15 +26,18 @@ Order of evaluation:
 
 A gate that crashes or prints non-JSON must not become an accidental `allow`,
 so the hook command is wrapped to print `{"decision":"ask"}` on failure, and
-the gate's stdout is write-once.
+the gate's stdout is write-once. Note what that fallback means once `agy`'s own
+engine is in the picture — see "The hook wrapper is fail-open" below.
 
 ## Direction of merge
 
 Clients narrow; they never widen.
 
 - `allow` — **intersected** with the profile ceiling. Anything the ceiling
-  refuses comes back in the job's `rejected_allow` rather than failing
-  silently. Check it (a `dry_run` is enough) before assuming a retry will work.
+  refuses comes back as a `source: "policy_ceiling"` blocker on the `agy_start`
+  reply (and in the job's `rejected_allow`) rather than failing silently. Read
+  `policy_summary.allow_count` before assuming a retry will work — a `dry_run`
+  is enough.
 - `deny` — **unioned**. Deny always wins.
 - `network` — a request for `allow` only takes effect on a profile whose
   `networkOptIn` is true. Network is denied by default everywhere.
@@ -57,9 +60,16 @@ Read-only investigation. `default_decision: deny`.
 Read/write work inside the workspace. `default_decision: ask`.
 
 - allow: reading and writing inside the workspace,
-  `git status|log|diff|add|commit`, `python -m pytest`
-- deny: `git push`, `pip install`, `rm`, `sudo`
+  `git status|log|diff|add|commit`, `python -m pytest`, and the common build
+  commands — `./gradlew`, `gradle`, `mvn`, `npm test`, `npm run`, `javac`,
+  `java`
+- deny: `git push`, `pip install`, `npm install`, `rm`, `sudo`
 - network: denied, but a client may opt in
+
+The build commands are in the ceiling for `permissions.allow` intersection, not
+for the gate: `default_decision: ask` means they already ran. What they change
+is that asking for them by name no longer bounces — and a bounced request is
+worse than it sounds, see the collapse below.
 
 > ⚠ **`general_worker` is not a trust boundary.** Its `default_decision` is
 > `ask`, which delegates to `agy`'s built-in engine, and that engine
@@ -80,25 +90,171 @@ command(rm -rf)   command(git push)   command(sudo)   command(curl)
 read_file(~/.ssh/**)   read_file(~/.aws/**)   read_file(~/.gnupg/**)   read_file(~/.netrc)
 ```
 
+## Security model, end to end
+
+Read this before deciding what a profile is worth.
+
+### Two permission systems are stacked, and we own only one
+
+1. **Our policy**, enforced by the `PreToolUse` gate described above. Profiles,
+   containment, hard denies — everything in this document up to here.
+2. **`agy`'s own permission engine and sandbox.** Undocumented, not
+   configurable by us, and not switchable off. Its `permission_mode` is
+   `proceed-in-sandbox` on every run we measured.
+
+The second one is why `ask` is not a question. `ask` hands the decision to
+`agy`, and under `proceed-in-sandbox` `agy` approves it. In seven consecutive
+real jobs the gate emitted `decision: ask` for every single tool call and every
+single one ran. It also refuses things we never see: a measured refusal read
+
+```
+permission check failed for unsandboxed "ls -la ~/.jdks/": user denied
+permission to run command:
+ls -la ~/.jdks/
+```
+
+That is `agy` refusing, not us. No `permissions.allow` entry affects it, which
+is why the broker reports it as `source: "agy_engine"`, `actionable: false`.
+
+### What we actually control
+
+Three things, and nothing else:
+
+- **argv** — which flags `agy` is started with. `--sandbox`, `--add-dir`,
+  `--conversation`, and the refusal to ever pass
+  `--dangerously-skip-permissions`.
+- **the `PreToolUse` hook** — our gate, for the tool calls `agy` chooses to
+  route through it.
+- **the process boundary** — a detached process group we can kill, a workspace
+  we canonicalize, and a fixed, small environment allowlist for the child.
+
+Everything else — what the model decides to attempt, what `agy`'s own engine
+permits, what the sandbox refuses — is outside this package.
+
+### The gate only classifies `run_command`
+
+`subjectFromToolCall` derives a rule subject from `run_command`'s `CommandLine`
+and returns null for every other tool, because no other tool's argument shape
+is measured. A null subject cannot match any rule, so **file tools are never
+matched against `read_file(...)` / `write_file(...)` rules**; they fall through
+to `default_decision`. On `research_readonly` that is `deny`, which holds. On
+`general_worker` it is `ask`, which `agy` approves.
+
+Consequence: `write_file({workspace}/**)` in the `general_worker` ceiling
+describes an intent, not an enforced boundary.
+
+### The hook wrapper is fail-open
+
+The command written into `.agents/hooks.json` is:
+
+```
+node '<abs>/dist/gate.js' || printf '{"decision":"ask"}'
+```
+
+If the gate cannot start at all, the hook emits `ask` — and `ask` is
+auto-approved under `proceed-in-sandbox`. **The net effect is fail-open.** The
+alternative is worse and was measured: empty stdout from a `sh -c` that failed
+is read by `agy` as an unconditional *deny* for every tool call in that
+workspace, including the user's own unrelated interactive `agy` sessions. We
+chose the failure mode that cannot brick someone's editor, and this is what it
+costs.
+
+### `agy`'s sandbox, measured
+
+| Probe | Result |
+| --- | --- |
+| Read/write `~/.gradle` | passed — not blocked |
+| `ls ~/.jdks` | refused by `agy`'s own engine (message above) |
+| Loopback TCP `connect` | `EPERM` — so no Gradle daemon; `--no-daemon` behaves the same |
+| Write a file outside the workspace | **not blocked** |
+| Running with `--sandbox` vs. without | identical behaviour; `permission_mode` stayed `proceed-in-sandbox` either way |
+
+So the sandbox is path-selective in ways we cannot predict, blocks local
+sockets, and does not confine writes. Passing `--sandbox` changed nothing we
+could observe — we keep passing it because removing a safety flag on the
+strength of one negative measurement is not an improvement, but do not count on
+it.
+
+`agy --help` on `--add-dir` reads, verbatim:
+
+```
+--add-dir  Add a directory to the workspace (repeatable) (default [])
+```
+
+That flag is what makes `agy` load the workspace `.agents/hooks.json` at all —
+without it our gate never runs.
+
+### Conclusion
+
+**`research_readonly` is the only profile that blocks anything for real.** Its
+`default_decision` is `deny`, so the fall-through case — every tool we cannot
+classify, every command not on its allow list — is refused by us before `agy`'s
+engine is ever consulted.
+
+`general_worker` is a **guardrail against accident, not an adversary**. Its
+hard denies stop the specific commands they name (including through one layer
+of `sh -c` or `env`), and containment stops a redirect out of the workspace.
+Everything else runs. Run untrusted prompts under `research_readonly`, in a
+workspace you would not mind losing.
+
 ## Recovering from a blocked job
+
+Everything that stood in the way is one list: `verification.blockers[]`. Each
+entry answers the two questions that decide your next call.
+
+| Field | Means |
+| --- | --- |
+| `source` | Who refused: `policy_ceiling`, `gate`, `agy_engine`, `sandbox`, `broker`, `tool_error`. |
+| `actionable` | Whether a different `agy_start` can lift it. |
+| `remedy` | What to change. Null exactly when `actionable` is false. |
+| `blocks_outcome` | Whether this is why `outcome` is `blocked`. |
+| `detail` | The original record — `required_rule`, `signature`, `policy` stage, `step_idx`. |
 
 ```
 agy_result(job_id, section: "verification")
-  -> permission_denials[0].required_rule == "command(python -m pytest)"
+  -> blockers[0] = { source: "gate", actionable: true,
+                     remedy: "command(python -m pytest)", blocks_outcome: true }
 
 agy_start({ ..., permissions: { allow: ["command(python -m pytest)"] }, dry_run: true })
-  -> check rejected_allow is empty
+  -> policy_summary.allow_count > 0, blockers == []
 
 agy_start({ ... })   # for real this time
 ```
 
-If the denial's `policy` field says `containment`, no `allow` rule will fix it:
-the command was trying to leave the workspace. Change the command, or the
-workspace.
+`actionable: false` is the answer to "should I retry with a wider `allow`?" —
+no. Three ways it happens:
 
-For an `environment_blocks[]` entry instead, the signature names a silent
-sandbox failure — usually a denied DNS lookup. Retry on a profile that permits
-`permissions.network: "allow"`.
+- `source: "gate"` with `detail.policy == "containment"` — the command tried to
+  leave the workspace. Containment runs before rule matching, so no rule grants
+  it. Change the command, or the workspace.
+- `source: "agy_engine"` — agy's own permission engine refused
+  (`user denied permission to run command`, `permission check failed for
+  unsandboxed`). It never reached our gate; our policy has no say in it. This
+  one also does **not** force `blocked`: a non-gate error step is
+  indistinguishable from an ordinary failing command, so we report it without
+  claiming it.
+- `source: "sandbox"` with a non-network signature — agy's sandbox refused, and
+  we cannot configure agy's sandbox. A network signature *is* actionable:
+  `permissions.network: "allow"` on a profile that permits opting in.
+
+### Check the ceiling before you spend a turn
+
+`agy_start` answers in the same vocabulary before anything runs — on the real
+call as well as `dry_run`:
+
+```json
+{ "policy_summary": { "profile": "general_worker", "allow_count": 0, ... },
+  "blockers": [ { "source": "policy_ceiling", "actionable": true, ... } ],
+  "warnings": [ "..." ] }
+```
+
+**`allow_count: 0` is the trap.** `allow` is the *intersection* of your request
+with the ceiling, so a request the ceiling refuses wholesale leaves the
+effective allow list empty — and takes the profile's own defaults (workspace
+read/write, `git`, `pytest`, the build commands) with it. Measured: a client
+asked for three build commands, all three landed in `rejected_allow`, and the
+job ran with nothing explicitly allowed. The fix is to start again with no
+`permissions.allow` at all, which restores the full ceiling.
 
 ## Sessions
 

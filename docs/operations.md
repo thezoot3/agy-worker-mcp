@@ -17,6 +17,13 @@ state home, keyed by a hash of the canonical project root:
 `index.db` is SQLite: jobs, sessions, and locks. It is what makes a job
 visible to a second client that did not start it.
 
+`broker-result.json` carries its own shape version, separate from the SQLite
+schema version. Job directories outlive a server upgrade, so a result written
+by an older version is migrated in memory when it is read (0.1.0's split
+`permission_denials` / `environment_blocks` lists become `blockers[]`), and a
+version this server does not know is refused with a `VALIDATION` error rather
+than half-read.
+
 The one exception is `.agents/hooks.json`, written into the workspace so `agy`
 loads our permission gate. It merges into an existing file rather than
 clobbering unrelated keys, and it holds absolute paths — do not commit it.

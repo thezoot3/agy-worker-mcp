@@ -95,10 +95,12 @@ agy_logs  { job_id }                   -- only if you want the stream itself
 `agy_start` with `dry_run: true` resolves configuration and policy without
 spawning `agy`, so you can settle permissions before spending quota.
 
-When a job comes back `blocked`, `agy_result`'s
-`verification.permission_denials[].required_rule` is a rule string
-(e.g. `command(python -m pytest)`) — paste it into the next `agy_start`'s
-`permissions.allow` and retry.
+When a job comes back `blocked`, `agy_result`'s `verification.blockers[]` says
+who refused. Each entry carries `actionable` (can a different `agy_start` lift
+it) and `remedy` (what to change — for our own gate, the rule string to paste
+into the next `permissions.allow`). `actionable: false` means no rule will
+help: `agy`'s own permission engine refused, or the command tried to leave the
+workspace.
 
 ## Tools
 
@@ -123,20 +125,28 @@ Two profiles ship today:
 
 - **`research_readonly`** (default) — read-only workspace access and shallow
   `git` inspection. No writes, no interpreters, no network.
-- **`general_worker`** — read/write inside the workspace, `git` and `pytest`,
-  network opt-in. `git push`, package installs, `rm`, and `sudo` are hard-denied
-  regardless of what a client requests.
+- **`general_worker`** — read/write inside the workspace, `git`, `pytest`, and
+  the common build commands (`./gradlew`, `gradle`, `mvn`, `npm test`,
+  `npm run`, `javac`, `java`), network opt-in. `git push`, package installs,
+  `rm`, and `sudo` are hard-denied regardless of what a client requests.
 
 Client-requested permissions can only **narrow** a profile: `allow` is
-intersected with the ceiling (rejections come back in `rejected_allow`), `deny`
-always wins.
+intersected with the ceiling, `deny` always wins. `agy_start` reports what the
+ceiling did to your request — `policy_summary.allow_count` and a
+`source: "policy_ceiling"` blocker per rejected rule. Watch for
+`allow_count: 0`: a fully rejected `allow` request collapses the effective list
+to empty and takes the profile's own defaults with it.
 
 > ⚠ **`general_worker` is not a trust boundary.** Its `default_decision` is
 > `ask`, which delegates to `agy`'s own engine, and that engine auto-approves
 > under `proceed-in-sandbox` — so any shell command not on a deny list runs, and
 > an allowed interpreter can write anywhere. Shell redirection out of the
 > workspace *is* blocked by the gate, but `agy`'s `--sandbox` does **not**
-> confine writes (measured). Run untrusted prompts under `research_readonly`.
+> confine writes (measured). Only `research_readonly`, whose fall-through
+> verdict is `deny`, blocks anything for real. Run untrusted prompts under it.
+> [`docs/permissions.md`](./docs/permissions.md#security-model-end-to-end) has
+> the whole model, including what the gate does not see and where it fails
+> open.
 
 Full model — evaluation order, containment, denial recovery, sessions and locks
 — in [`docs/permissions.md`](./docs/permissions.md).

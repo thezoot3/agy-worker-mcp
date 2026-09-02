@@ -33,10 +33,24 @@ redirected to files in the job directory.
 | `expected_artifacts` | string[] | `[]` | Workspace-relative paths that must exist afterwards. A missing one blocks `verified_success`. |
 | `json_schema` | string | — | Path to a JSON schema for structured output. Must be inside the project root. |
 | `requested_by`, `parent_task_id` | string | — | Free-form attribution, echoed back by `agy_list_jobs`. |
-| `dry_run` | boolean | `false` | Resolve config, argv, and policy — including `rejected_allow` — without spawning `agy`. Costs no quota. |
+| `dry_run` | boolean | `false` | Resolve config, argv, and policy — including the ceiling's rejections — without spawning `agy`. Costs no quota. |
 
 Returns `{ job_id, session_id, lifecycle: "queued", profile, cwd, session_mode, deadline_at, idle_timeout_ms }`,
 or `{ dry_run: true, effective_config }` when `dry_run` is set.
+
+Both replies also carry, in the same vocabulary a finished job is judged in:
+
+| Field | Notes |
+| --- | --- |
+| `policy_summary` | `{ profile, allow_count, network, default_decision }` — what the policy actually resolved to. |
+| `blockers` | One `source: "policy_ceiling"` entry per `permissions.allow` rule the ceiling refused, each with `actionable` and `remedy`. |
+| `warnings` | Those blockers rendered as prose. |
+
+**Read `policy_summary.allow_count`.** `allow` is intersected with the ceiling,
+so a request the ceiling refuses wholesale collapses the effective list to
+empty — profile defaults included — and the job then runs with nothing
+explicitly allowed. `allow_count: 0` comes with its own blocker saying so, and
+the remedy is to start again with no `permissions.allow` at all.
 
 Use `dry_run` to settle permissions before spending a real turn, especially
 when retrying a job that came back `blocked`.
@@ -55,9 +69,17 @@ is done.
 | `after_cursor` | int | Byte offset from a previous call, applied to the in-progress log tail. A finished job returns the full judgement packet and its end-of-stream cursor regardless. |
 
 Returns the judgement packet — `outcome`, `headline`, `exit_code`,
-`duration_ms`, `agent_status`, `contract_status`, counts of denials /
-environment blocks / missing artifacts / tool errors / turns, and a capped log
-tail. Never the full response text; use `agy_result` for that.
+`duration_ms`, `agent_status`, `contract_status`, `counts`
+(`{ blockers, actionable, tool_errors, turns }`), `warnings`, and a capped log
+tail. Never the full response text, and never the blocker list itself; use
+`agy_result` for those.
+
+`counts.blockers` is how many things stood in the way, `counts.actionable` how
+many of them a different `agy_start` could lift. The `headline` names the
+sources (`blocked … : 1 gate denial (actionable), 1 sandbox block`). For a job
+that ran to a conclusion — not `canceled` / `timed_out` / `failed`, which
+outrank verification — `outcome === "blocked"` exactly when some blocker has
+`blocks_outcome: true`.
 
 The returned `cursor` is safe to feed straight back into `agy_logs`.
 
@@ -90,11 +112,10 @@ an error while the job is still live.
 - `summary` — the broker's verdict.
 - `agent_report` — `agy`'s own claim. Unverified. Never decide anything from
   its `status` alone.
-- `verification` — `permission_denials[]` (each with a `required_rule` you can
-  paste into the next `permissions.allow`), `environment_blocks[]` (each with a
-  `signature` explaining a silent sandbox failure), missing artifacts, and
-  warnings such as "this session was closed by its idle timeout, resume with
-  `agy_start({ session_id })`".
+- `verification` — `blockers[]` (see below), `expected_artifacts[]`,
+  `changed_files[]`, and `warnings[]`: the blockers rendered as prose, plus
+  observations that are not blockers, such as "this session was closed by its
+  idle timeout, resume with `agy_start({ session_id })`".
 - `response` — the agent's text, paged.
 
 ## `agy_logs`
@@ -197,12 +218,36 @@ sandbox block both surface here as `SUCCESS` with `exit 0`, which is exactly why
 the structured-output contract (`json_schema`, `expected_artifacts`) the caller
 asked for.
 
-### Two blocked classes
+### `blockers[]` — what stood in the way
 
-- **Class 1** — a structured denial from our permission gate. Recoverable:
-  `verification.permission_denials[].required_rule` names the rule to allow.
-  A denial whose `policy` field says `containment` is *not* recoverable by
-  allowing a rule; it means the command tried to leave the workspace.
-- **Class 2** — a silent environment block, e.g. a denied DNS lookup, with no
-  structured error anywhere. Detected by matching known output signatures;
-  `verification.environment_blocks[].signature` says which one matched.
+One list, one vocabulary, on `agy_result`'s `verification` and (for the
+pre-flight case) on `agy_start`'s reply.
+
+| Field | Notes |
+| --- | --- |
+| `source` | Who refused. See the table below. |
+| `actionable` | Whether a different `agy_start` can lift it. |
+| `remedy` | Exactly what to change. Null when — and only when — `actionable` is false. |
+| `blocks_outcome` | Whether this is a reason `outcome` is `blocked`. |
+| `tool`, `command` | The tool call it happened on, when there was one. |
+| `message` | Human-readable, carrying the measured message verbatim where there is one. |
+| `detail` | The original record: `required_rule`, `signature`, the gate `policy` stage, `step_idx`. Nothing is lost. |
+
+| `source` | What it is | `actionable` | `blocks_outcome` |
+| --- | --- | --- | --- |
+| `policy_ceiling` | A `permissions.allow` entry the profile ceiling refused. Pre-flight, on `agy_start` only. | yes | n/a — there is no job yet |
+| `gate` | Our own gate refused. The only refusal we can confirm. `remedy` is the rule to allow. | yes | yes |
+| `gate`, `detail.policy: "containment"` | The command tried to leave the workspace. Containment runs before rule matching. | **no** | yes |
+| `agy_engine` | `agy`'s own permission engine refused, outside our policy entirely. | no | **no** |
+| `sandbox` | `agy`'s sandbox blocked it silently — a known output signature matched. | network signatures only | yes |
+| `broker` | A broker-side check failed: an `expected_artifacts` entry that does not exist. | yes | yes |
+| `tool_error` | An ordinary failing tool call with no refusal signature. Not a permission matter. | no | **no** |
+
+Why `agy_engine` and `tool_error` do not force `blocked`: a non-gate error step
+is indistinguishable from an ordinary failing command by its shape alone, so
+counting them as blocks would report every failing test as a permission
+problem. They are reported, they appear in `warnings` and in the headline's
+`(non-blocking: …)` fragment, and they never overturn a success verdict.
+
+Both are also the reason to read `actionable` before retrying: no
+`permissions.allow` rule affects either one.
