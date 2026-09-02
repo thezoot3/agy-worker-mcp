@@ -28,6 +28,20 @@ export function createServer(opts: CreateServerOptions): McpServer {
       instructions: SERVER_INSTRUCTIONS,
     },
   )
+  // What the client declared at `initialize`. The SDK only fills these in once
+  // the handshake completed, so read them per call rather than snapshotting at
+  // construction time.
+  opts.ctx.getClient = () => {
+    const impl = server.server.getClientVersion()
+    const caps = server.server.getClientCapabilities()
+    if (!impl && !caps) return null
+    return {
+      name: impl?.name ?? null,
+      version: impl?.version ?? null,
+      capabilities: caps ? (caps as Record<string, unknown>) : null,
+    }
+  }
+
   registerAllTools(server, opts.ctx)
   return server
 }

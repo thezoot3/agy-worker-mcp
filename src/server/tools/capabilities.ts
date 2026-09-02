@@ -74,6 +74,7 @@ export async function handleCapabilities(
       limits: ctx.limits,
       agy_bin: agyBin,
       agy_bin_present: checkAgyBinPresent(agyBin),
+      client: ctx.getClient?.() ?? null,
     }
     return reply(caps)
   } catch (e) {

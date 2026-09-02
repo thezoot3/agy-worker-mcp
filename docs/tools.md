@@ -61,6 +61,21 @@ tail. Never the full response text; use `agy_result` for that.
 
 The returned `cursor` is safe to feed straight back into `agy_logs`.
 
+**How long to wait depends on your client, not on the job.** The job is
+detached either way: it survives the call, the connection, and the client
+process, so blocking is a convenience and never a requirement.
+
+- Claude Code moves an MCP call that outlives its tool timeout (observed at
+  120 s, `MCP_TOOL_TIMEOUT`) into a background task and notifies you when it
+  returns — a long `wait_ms` costs one round trip and does not block the
+  session. The backgrounded *call* does not survive leaving the session; the
+  job does, and `agy_wait` picks it back up.
+- Codex has no such backgrounding: a call that outlives `tool_timeout_sec`
+  fails. Use a `wait_ms` inside that budget, or `wait_ms: 0` snapshots.
+
+Polling costs tokens, not processes. `wait_ms: 0` returns the judgement packet
+only, so it is the cheap way to check on several jobs at once.
+
 ## `agy_result`
 
 Full result of a finished job. Returns a "not finished yet" reply instead of
@@ -145,6 +160,13 @@ No parameters. Reports the observed models and modes, the two profiles with
 their `write` / `network` / `default_decision` shape, limits, the **discovered
 project root**, the server version, the schema version, and whether the `agy`
 binary is reachable on `PATH` (checked without ever spawning it).
+
+It also reports `client` — the name, version, and declared capabilities of the
+MCP client on the other end of this connection, taken from the `initialize`
+handshake. That is where to look before assuming an optional protocol feature
+is available: `capabilities.tasks` is what decides whether a long call could be
+handed back as a background task rather than held open. Measured: Codex
+0.150.1 declares `elicitation` only, no `tasks`.
 
 Call this first when a client's project root is in doubt.
 

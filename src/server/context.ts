@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { Capabilities } from '../contract/types.js'
+import type { Capabilities, ClientSnapshot } from '../contract/types.js'
 import type { ProjectPaths } from '../contract/paths.js'
 import { packageRoot } from '../contract/paths.js'
 import { toErrorEnvelope } from '../contract/errors.js'
@@ -13,6 +13,11 @@ export interface ToolContext {
   paths: ProjectPaths
   version: string
   limits: Capabilities['limits']
+  /**
+   * Set by `createServer` once the transport exists. Left undefined when a test
+   * (or any other caller) drives the handlers directly with no client attached.
+   */
+  getClient?: () => ClientSnapshot | null
 }
 
 /**

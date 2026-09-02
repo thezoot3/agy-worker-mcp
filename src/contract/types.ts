@@ -747,6 +747,22 @@ export interface JudgementPacket {
 // 9. Capabilities
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * What the connected MCP client told us at `initialize`.
+ *
+ * Reported so a caller can see, rather than guess, which optional protocol
+ * features are actually negotiated on this connection — `capabilities.tasks`
+ * in particular decides whether a long call can be handed to the client as a
+ * background task instead of blocking its turn. Null before `initialize`
+ * completes, or when the server is driven without a client (tests).
+ */
+export interface ClientSnapshot {
+  name: string | null
+  version: string | null
+  /** Verbatim `ClientCapabilities` — an empty object means "declared nothing". */
+  capabilities: Record<string, unknown> | null
+}
+
 export interface Capabilities {
   server_version: string
   schema_version: number
@@ -786,4 +802,6 @@ export interface Capabilities {
   agy_bin: string
   /** False when the configured binary is missing; `agy_start` will fail. */
   agy_bin_present: boolean
+  /** The connected client's own `initialize` declaration. See {@link ClientSnapshot}. */
+  client: ClientSnapshot | null
 }
