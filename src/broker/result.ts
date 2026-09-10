@@ -107,6 +107,8 @@ export function buildBrokerResult(store: Store, input: BuildResultInput): Broker
     lifecycle: input.job.lifecycle,
     exitCode: input.exitCode,
     agentStatus: agentReport.status,
+    agentError: agentReport.error,
+    agentResponse: agentReport.response,
     verification,
     timedOut: input.timedOut,
     canceled: input.canceled,

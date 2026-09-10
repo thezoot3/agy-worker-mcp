@@ -1,4 +1,8 @@
+import { homedir } from 'node:os'
+import { isAbsolute, resolve } from 'node:path'
+
 import { ValidationError } from '../contract/errors.js'
+import { canonicalize, isWithin } from '../contract/paths.js'
 import type { ParsedRule, RuleVerb } from '../contract/types.js'
 
 /**
@@ -195,8 +199,257 @@ export function headTokenIsObfuscated(token: string): boolean {
   return /[\\$'"]|[^\x00-\x7F]/.test(token)
 }
 
+/**
+ * Strips heredoc bodies (`<<` and `<<-`) from a shell command string.
+ *
+ * Heredoc bodies contain data (such as multi-line file content), not executed
+ * shell commands. Stripping bodies before splitting segments, tokenizing, and
+ * denial scanning prevents body contents from falsely matching command deny
+ * rules or splitting into phantom command segments, while preserving the
+ * command line's redirections (e.g. `> out.txt`) for write containment.
+ *
+ * Returns `null` on syntax error (unterminated heredoc, invalid delimiter).
+ */
+export function stripHeredocs(cmd: string): string | null {
+  // Fast path: if there is no heredoc redirection operator, the input has no heredoc bodies.
+  if (!cmd.includes('<<')) {
+    return cmd
+  }
+
+  let result = ''
+  let quote: "'" | '"' | null = null
+  let pendingHeredocs: Array<{ delimiter: string; stripTabs: boolean }> = []
+  let i = 0
+  const n = cmd.length
+
+  while (i < n) {
+    const c = cmd[i] as string
+
+    if (quote === '"' && c === '\\' && i + 1 < n) {
+      result += c + (cmd[i + 1] as string)
+      i += 2
+      continue
+    }
+
+    if (c === "'" || c === '"') {
+      if (quote === null) {
+        quote = c
+      } else if (quote === c) {
+        quote = null
+      }
+      result += c
+      i++
+      continue
+    }
+
+    if (quote !== null) {
+      result += c
+      i++
+      continue
+    }
+
+    // Outside quotes: check for heredoc redirection
+    if (c === '<' && i + 1 < n && cmd[i + 1] === '<') {
+      // Here-string `<<<` is not a heredoc; it takes a word on the same line.
+      // Failing closed (`null`) preserves the existing conservative parser behavior.
+      if (i + 2 < n && cmd[i + 2] === '<') {
+        return null
+      }
+
+      let stripTabs = false
+      let p = i + 2
+      if (p < n && cmd[p] === '-') {
+        stripTabs = true
+        p++
+      }
+
+      // Skip optional horizontal whitespace between << / <<- and the delimiter word
+      while (p < n && (cmd[p] === ' ' || cmd[p] === '\t')) {
+        p++
+      }
+
+      if (
+        p >= n ||
+        cmd[p] === '\n' ||
+        cmd[p] === '\r' ||
+        cmd[p] === ';' ||
+        cmd[p] === '&' ||
+        cmd[p] === '|'
+      ) {
+        // Missing delimiter word
+        return null
+      }
+
+      let delimiter = ''
+      let inSingleQuote = false
+      let inDoubleQuote = false
+
+      while (p < n) {
+        const ch = cmd[p] as string
+        if (!inSingleQuote && !inDoubleQuote) {
+          if (ch === '\\') {
+            p++
+            if (p >= n || cmd[p] === '\n' || cmd[p] === '\r') {
+              return null
+            }
+            delimiter += cmd[p] as string
+            p++
+            continue
+          }
+          if (ch === "'") {
+            inSingleQuote = true
+            p++
+            continue
+          }
+          if (ch === '"') {
+            inDoubleQuote = true
+            p++
+            continue
+          }
+          if (
+            ch === ' ' ||
+            ch === '\t' ||
+            ch === '\n' ||
+            ch === '\r' ||
+            ch === ';' ||
+            ch === '&' ||
+            ch === '|' ||
+            ch === '<' ||
+            ch === '>' ||
+            ch === '(' ||
+            ch === ')'
+          ) {
+            break
+          }
+          delimiter += ch
+          p++
+          continue
+        }
+
+        if (inSingleQuote) {
+          if (ch === "'") {
+            inSingleQuote = false
+            p++
+            continue
+          }
+          delimiter += ch
+          p++
+          continue
+        }
+
+        if (inDoubleQuote) {
+          if (ch === '\\') {
+            p++
+            if (p >= n || cmd[p] === '\n' || cmd[p] === '\r') {
+              return null
+            }
+            const nextCh = cmd[p] as string
+            if (['$', '`', '"', '\\'].includes(nextCh)) {
+              delimiter += nextCh
+            } else {
+              delimiter += '\\' + nextCh
+            }
+            p++
+            continue
+          }
+          if (ch === '"') {
+            inDoubleQuote = false
+            p++
+            continue
+          }
+          delimiter += ch
+          p++
+          continue
+        }
+      }
+
+      if (inSingleQuote || inDoubleQuote || delimiter.length === 0) {
+        return null
+      }
+
+      pendingHeredocs.push({ delimiter, stripTabs })
+      result += cmd.slice(i, p)
+      i = p
+      continue
+    }
+
+    // Check for newline outside quotes
+    if (c === '\n' || (c === '\r' && i + 1 < n && cmd[i + 1] === '\n')) {
+      if (pendingHeredocs.length === 0) {
+        if (c === '\r') {
+          result += '\r\n'
+          i += 2
+        } else {
+          result += '\n'
+          i++
+        }
+        continue
+      }
+
+      // Advance past the newline terminating the command line
+      if (c === '\r') {
+        i += 2
+      } else {
+        i++
+      }
+
+      // Consume heredoc bodies in declared order
+      for (const heredoc of pendingHeredocs) {
+        let matchedDelimiter = false
+        while (i < n) {
+          let lineEnd = i
+          while (lineEnd < n && cmd[lineEnd] !== '\n' && cmd[lineEnd] !== '\r') {
+            lineEnd++
+          }
+          let lineContent = cmd.slice(i, lineEnd)
+          if (heredoc.stripTabs) {
+            lineContent = lineContent.replace(/^\t+/, '')
+          }
+
+          // Advance past line content and trailing newline
+          i = lineEnd
+          if (i < n && cmd[i] === '\r' && i + 1 < n && cmd[i + 1] === '\n') {
+            i += 2
+          } else if (i < n && (cmd[i] === '\n' || cmd[i] === '\r')) {
+            i++
+          }
+
+          if (lineContent === heredoc.delimiter) {
+            matchedDelimiter = true
+            break
+          }
+        }
+
+        if (!matchedDelimiter) {
+          // Unterminated heredoc: end of input reached before delimiter line
+          return null
+        }
+      }
+
+      pendingHeredocs = []
+
+      // If more commands follow after the heredoc terminator, separate with a newline
+      if (i < n) {
+        result += '\n'
+      }
+      continue
+    }
+
+    result += c
+    i++
+  }
+
+  if (quote !== null || pendingHeredocs.length > 0) {
+    return null
+  }
+
+  return result
+}
+
 /** Tokenizer that preserves quote characters in tokens for obfuscation detection */
 export function tokenizeCommandRaw(cmd: string): string[] {
+  const stripped = stripHeredocs(cmd)
+  if (stripped !== null) cmd = stripped
   const tokens: string[] = []
   let i = 0
   const n = cmd.length
@@ -415,6 +668,8 @@ function basename(token: string): string {
 
 /** A minimal shell-aware tokenizer: `'...'`/`"..."` groups survive as one token, quotes stripped. */
 export function tokenizeCommand(cmd: string): string[] {
+  const stripped = stripHeredocs(cmd)
+  if (stripped !== null) cmd = stripped
   const tokens: string[] = []
   let i = 0
   const n = cmd.length
@@ -530,17 +785,22 @@ export function stripEnvPrefixTokens(tokens: string[]): EnvPrefixResult {
  * Returns `null` on syntax error (unbalanced quotes, heredoc `<<`).
  */
 export function splitChainSegments(cmd: string): string[] | null {
+  const stripped = stripHeredocs(cmd)
+  if (stripped === null) {
+    return null
+  }
+
   const segments: string[] = []
   let current = ''
   let quote: "'" | '"' | null = null
   let i = 0
-  const n = cmd.length
+  const n = stripped.length
 
   while (i < n) {
-    const c = cmd[i] as string
+    const c = stripped[i] as string
 
     if (quote === '"' && c === '\\' && i + 1 < n) {
-      current += c + (cmd[i + 1] as string)
+      current += c + (stripped[i + 1] as string)
       i += 2
       continue
     }
@@ -562,13 +822,8 @@ export function splitChainSegments(cmd: string): string[] | null {
       continue
     }
 
-    // Heredoc check: << outside quotes
-    if (c === '<' && i + 1 < n && cmd[i + 1] === '<') {
-      return null
-    }
-
     // CRLF (\r\n) or LF (\n)
-    if (c === '\r' && i + 1 < n && cmd[i + 1] === '\n') {
+    if (c === '\r' && i + 1 < n && stripped[i + 1] === '\n') {
       const trimmed = current.trim()
       if (trimmed.length > 0) segments.push(trimmed)
       current = ''
@@ -791,6 +1046,8 @@ function windowMatchesPattern(patternTokens: string[], valueTokens: string[], st
  * enough to hide a HARD_DENY command from the gate.
  */
 function commandLineContainsPattern(patternTokens: string[], value: string): boolean {
+  const stripped = stripHeredocs(value)
+  if (stripped !== null) value = stripped
   const valueTokens = tokenizeCommand(value)
 
   for (let start = 0; start + patternTokens.length <= valueTokens.length; start++) {
@@ -924,11 +1181,163 @@ function requiredRuleForTokens(tokens: string[]): string {
   return `command(${tokens.join(' ')})`
 }
 
+/**
+ * The workspace the interpreter rules are contained against.
+ *
+ * Callers pass it explicitly. The allow-rule fallback exists for the few call
+ * sites that only hold a rule list, and reads the workspace out of the
+ * containment rules the policy always carries. There is deliberately no
+ * `process.cwd()` fallback: this is a security boundary, and the gate runs as a
+ * hook agy spawns, whose cwd is not guaranteed to be the workspace. With no
+ * workspace to check against, the answer is `null` and the caller denies.
+ */
+function getEffectiveWorkspace(allowRules: ParsedRule[], workspace?: string): string | null {
+  if (workspace) {
+    return workspace
+  }
+  for (const rule of allowRules) {
+    if (rule.verb === 'read_file' || rule.verb === 'write_file') {
+      const pathPattern = rule.pattern.replace(/\/\*\*$/, '')
+      if (isAbsolute(pathPattern) && !pathPattern.includes('*')) {
+        return pathPattern
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * Verifies that a node or python3 invocation targets a script path strictly
+ * within the workspace.
+ *
+ * Allowing interpreter execution is safe only when the code being executed is
+ * auditable within the repository. Broadening the rule to allow any argument
+ * would permit executing arbitrary external code (e.g. `/tmp/evil.py` or
+ * `~/.ssh/evil.js`).
+ */
+function isScriptPathInsideWorkspace(
+  head: string,
+  tokens: string[],
+  allowRules: ParsedRule[],
+  workspace?: string,
+): boolean {
+  let scriptArgument: string | null = null
+
+  if (head === 'node') {
+    let i = 1
+    while (i < tokens.length) {
+      const token = tokens[i] as string
+      // Inline evaluations (-e, --eval, -p, --print) are handled by command(node -e),
+      // not by this script path rule.
+      if (token === '-e' || token === '--eval' || token === '-p' || token === '--print') {
+        return false
+      }
+      // `--require=<path>` and friends load code before the script does, so the
+      // script path we check would not be the only thing that runs. The
+      // separated form is contained below; the `=` form is refused outright
+      // rather than parsed a second way.
+      if (/^--?(e|eval|p|print|r|require|loader|experimental-loader|import|conditions|C)=/.test(token)) {
+        return false
+      }
+      // Node options that take an argument
+      if (
+        (token === '-r' ||
+          token === '--require' ||
+          token === '--loader' ||
+          token === '--import' ||
+          token === '--conditions' ||
+          token === '-C') &&
+        i + 1 < tokens.length
+      ) {
+        const optionValue = tokens[i + 1] as string
+        if (
+          optionValue.startsWith('./') ||
+          optionValue.startsWith('../') ||
+          optionValue.startsWith('/') ||
+          optionValue.startsWith('~/')
+        ) {
+          const effectiveWorkspace = getEffectiveWorkspace(allowRules, workspace)
+          if (effectiveWorkspace === null) return false
+          const canonicalWorkspace = canonicalize(effectiveWorkspace)
+          const resolvedOption = optionValue.startsWith('~/')
+            ? resolve(homedir(), optionValue.slice(2))
+            : isAbsolute(optionValue)
+              ? resolve(optionValue)
+              : resolve(canonicalWorkspace, optionValue)
+          if (!isWithin(canonicalize(resolvedOption), canonicalWorkspace)) {
+            return false
+          }
+        }
+        i += 2
+        continue
+      }
+      if (token.startsWith('-')) {
+        i++
+        continue
+      }
+      scriptArgument = token
+      break
+    }
+  } else if (head === 'python' || head === 'python3') {
+    // Only flags that take no argument may precede the script. Anything else —
+    // `-X importtime`, `-W ignore`, an unrecognized long option — would consume
+    // the next token, and then the token we took for the script path is not the
+    // script python actually runs. Deny rather than guess which it was.
+    const noArgumentFlags = new Set([
+      '-b', '-bb', '-B', '-d', '-E', '-h', '-i', '-I', '-O', '-OO', '-P', '-q',
+      '-s', '-S', '-u', '-v', '-V', '-x', '--help', '--version',
+    ])
+    let i = 1
+    while (i < tokens.length) {
+      const token = tokens[i] as string
+      // Inline execution and module execution are handled by specific rules.
+      if (token === '-c' || token === '-m' || token.startsWith('-c') || token.startsWith('-m')) {
+        return false
+      }
+      if (token.startsWith('-')) {
+        if (!noArgumentFlags.has(token)) {
+          return false
+        }
+        i++
+        continue
+      }
+      scriptArgument = token
+      break
+    }
+  }
+
+  // Bare interpreter execution without a script path argument must not match.
+  if (!scriptArgument) {
+    return false
+  }
+
+  // Reject unexpanded variables or wildcards that cannot be verified statically.
+  if (/[\\$`*?[\]]/.test(scriptArgument)) {
+    return false
+  }
+
+  const effectiveWorkspace = getEffectiveWorkspace(allowRules, workspace)
+  if (effectiveWorkspace === null) return false
+  const canonicalWorkspace = canonicalize(effectiveWorkspace)
+  let resolvedPath: string
+  if (scriptArgument.startsWith('~/') || scriptArgument === '~') {
+    resolvedPath = resolve(homedir(), scriptArgument.slice(2))
+  } else if (isAbsolute(scriptArgument)) {
+    resolvedPath = resolve(scriptArgument)
+  } else {
+    resolvedPath = resolve(canonicalWorkspace, scriptArgument)
+  }
+
+  const canonicalScript = canonicalize(resolvedPath)
+  return isWithin(canonicalScript, canonicalWorkspace)
+}
+
 export function evaluateCommandPolicy(
   commandLine: string,
   allowRules: ParsedRule[],
   denyRules: ParsedRule[],
   depth: number = 0,
+  workspace?: string,
 ): CommandPolicyResult {
   if (depth > 4) {
     return {
@@ -980,7 +1389,7 @@ export function evaluateCommandPolicy(
     }
 
     for (const inner of subst.substitutions) {
-      const innerResult = evaluateCommandPolicy(inner, allowRules, denyRules, depth + 1)
+      const innerResult = evaluateCommandPolicy(inner, allowRules, denyRules, depth + 1, workspace)
       if (!innerResult.allowed) {
         return innerResult
       }
@@ -1045,7 +1454,7 @@ export function evaluateCommandPolicy(
           reason: 'xargs_target_missing',
         }
       }
-      const targetResult = evaluateCommandPolicy(target.join(' '), allowRules, denyRules, depth + 1)
+      const targetResult = evaluateCommandPolicy(target.join(' '), allowRules, denyRules, depth + 1, workspace)
       if (!targetResult.allowed) {
         return targetResult
       }
@@ -1058,7 +1467,7 @@ export function evaluateCommandPolicy(
       if (cIdx !== -1) {
         if (cIdx + 1 < segTokens.length) {
           const inner = segTokens[cIdx + 1] as string
-          const innerResult = evaluateCommandPolicy(inner, allowRules, denyRules, depth + 1)
+          const innerResult = evaluateCommandPolicy(inner, allowRules, denyRules, depth + 1, workspace)
           if (!innerResult.allowed) {
             return innerResult
           }
@@ -1158,6 +1567,16 @@ export function evaluateCommandPolicy(
     let matched = false
     for (const rule of allowRules) {
       if (matchRule(rule, { verb: 'command', value: segCmd })) {
+        // Broad interpreter rules (command(node), command(python3), command(python))
+        // are only granted when executing a script path within the repository workspace.
+        if (
+          rule.verb === 'command' &&
+          (rule.pattern === 'node' || rule.pattern === 'python3' || rule.pattern === 'python')
+        ) {
+          if (!isScriptPathInsideWorkspace(head, segTokens, allowRules, workspace)) {
+            continue
+          }
+        }
         matched = true
         if (!firstMatchedRule) firstMatchedRule = rule.raw
         break

@@ -22,6 +22,10 @@ export interface OutcomeInput {
   exitCode: number | null
   /** agy's own claim. An input, never the decision. */
   agentStatus: AgentStatus
+  /** agy's reported error message, if any. */
+  agentError?: string | null
+  /** agy's reported response text, if any. */
+  agentResponse?: string | null
   verification: Verification
   /** Set when the deadline fired. */
   timedOut: boolean
@@ -84,14 +88,42 @@ export interface OutcomeDecision {
  *    check counts as "actually verified" on its own, even with no
  *    `expected_artifacts` at all. With neither, `success_unverified`.
  */
+/** The exact message measured on agy 1.1.27 (about one job in twelve, independent of concurrency). */
+export const STREAM_INTERRUPTED_MESSAGE =
+  'The stream was interrupted. Please continue the task you were working on.'
+
+/**
+ * What we actually match on. The trailing sentence is advice to the agent and
+ * could reasonably change between agy versions; the first clause is the
+ * condition itself, so matching the prefix survives that.
+ */
+const STREAM_INTERRUPTED_PREFIX = 'The stream was interrupted'
+
 export function decideOutcome(input: OutcomeInput): OutcomeDecision {
   const outcome = computeOutcome(input)
   const headline = buildHeadline(outcome, input)
+  const warnings = [...input.verification.warnings]
+
+  // A stream interruption is a transport drop, not a reasoning failure.
+  // The job outcome remains failed because the runner did not complete cleanly,
+  // but surfacing the retryable classification allows callers to retry
+  // immediately without discarding their plan.
+  const reportedError = input.agentError
+  const isInterrupted =
+    Boolean(reportedError?.includes(STREAM_INTERRUPTED_PREFIX)) ||
+    warnings.some((warning) => warning.includes(STREAM_INTERRUPTED_PREFIX))
+
+  if (input.agentStatus === 'ERROR' && isInterrupted) {
+    warnings.push(
+      'stream interrupted (retryable): agy stream was interrupted before completion; this is a transient stream interruption, not a task failure — retry the job',
+    )
+  }
+
   return {
     outcome,
     contract_status: input.verification.contract_status,
     headline,
-    warnings: input.verification.warnings,
+    warnings,
   }
 }
 

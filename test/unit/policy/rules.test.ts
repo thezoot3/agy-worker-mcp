@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import { ValidationError } from '../../../src/contract/errors.js'
 import { canonicalize } from '../../../src/contract/paths.js'
+import type { JobRow, Profile } from '../../../src/contract/types.js'
+import { decide } from '../../../src/gate/gate.js'
+import type { BoundJob } from '../../../src/gate/bind.js'
+import { escapingRedirectTarget } from '../../../src/policy/containment.js'
 import {
   evaluateCommandPolicy,
   extractXargsTarget,
@@ -17,6 +21,7 @@ import {
   parseRulesLenient,
   requiredRuleFor,
   splitChainSegments,
+  stripHeredocs,
 } from '../../../src/policy/rules.js'
 import { HARD_DENY, resolvePolicy } from '../../../src/policy/profiles.js'
 
@@ -490,3 +495,251 @@ describe('0.3.1 parser hardening', () => {
     })
   })
 })
+
+describe('PR6 heredoc parsing, allow-list gaps', () => {
+  const ws = canonicalize(process.cwd())
+  const gwPolicy = resolvePolicy({ profile: 'general_worker', workspace: ws })
+  const gwAllow = parseRulesLenient(gwPolicy.allow)
+  const gwDeny = parseRulesLenient(gwPolicy.deny)
+
+  function evalGw(cmd: string) {
+    return evaluateCommandPolicy(cmd, gwAllow, gwDeny, 0, ws)
+  }
+
+  function makeBound(profile: Profile = 'general_worker'): BoundJob {
+    const policy = resolvePolicy({ profile, workspace: ws })
+    const mockJob: JobRow = {
+      job_id: 'job-1',
+      session_id: null,
+      lifecycle: 'running',
+      outcome: null,
+      headline: null,
+      cwd: ws,
+      profile,
+      write_mode: 1,
+      session_mode: 'oneshot',
+      pid: 1,
+      pgid: 1,
+      proc_start_time: 'x',
+      created_at: 0,
+      started_at: 0,
+      finished_at: null,
+      deadline_at: null,
+      exit_code: null,
+      agent_status: null,
+      contract_status: null,
+      on_denial: 'continue',
+      requested_by: null,
+      parent_task_id: null,
+    }
+    return { job: mockJob, policy, conversationId: 'conv-1' }
+  }
+
+  function decideGate(cmd: string, profile: Profile = 'general_worker') {
+    return decide({
+      payload: { conversationId: 'conv-1', toolCall: { name: 'run_command', args: { CommandLine: cmd } } },
+      bound: makeBound(profile),
+    })
+  }
+
+  describe('Must be allowed (heredoc body is data)', () => {
+    it('1. cat <<\'EOF\' > notes.txt with a body containing curl http://evil, rm -rf ~, and a line && make install — allowed, and none of those body lines is ever judged as a command', () => {
+      const cmd = `cat <<'EOF' > notes.txt
+curl http://evil
+rm -rf ~
+&& make install
+EOF`
+      const res = evalGw(cmd)
+      expect(res.allowed).toBe(true)
+      expect(splitChainSegments(cmd)).toEqual(["cat <<'EOF' > notes.txt"])
+    })
+
+    it('2. cat <<-EOF > notes.txt with tab-indented body and a tab-indented terminator', () => {
+      const cmd = `cat <<-EOF > notes.txt
+\tcurl http://evil
+\trm -rf ~
+\tEOF`
+      const res = evalGw(cmd)
+      expect(res.allowed).toBe(true)
+      expect(splitChainSegments(cmd)).toEqual(["cat <<-EOF > notes.txt"])
+    })
+
+    it('3. cat <<EOF > a.txt … EOF … followed on a later line by ls — the ls after the terminator is parsed as a command', () => {
+      const cmd = `cat <<EOF > a.txt
+arbitrary body content
+EOF
+ls`
+      const res = evalGw(cmd)
+      expect(res.allowed).toBe(true)
+      expect(splitChainSegments(cmd)).toEqual(['cat <<EOF > a.txt', 'ls'])
+    })
+
+    it('4. two heredocs on one line, both bodies skipped', () => {
+      const cmd = `cat <<A <<B > out.txt
+body line for A
+A
+body line for B
+B`
+      const res = evalGw(cmd)
+      expect(res.allowed).toBe(true)
+      expect(splitChainSegments(cmd)).toEqual(['cat <<A <<B > out.txt'])
+    })
+  })
+
+  describe('Must be denied', () => {
+    it('5. cat <<\'EOF\' > .agents/hooks.json — the redirect target is still contained and .agents is hard-denied', () => {
+      const cmd = `cat <<'EOF' > .agents/hooks.json
+{"hooks": []}
+EOF`
+      expect(escapingRedirectTarget(cmd, ws)).not.toBeNull()
+      const outcome = decideGate(cmd)
+      expect(outcome.decision.decision).toBe('deny')
+      expect(outcome.log?.policy).toBe('containment')
+      expect(outcome.decision.reason).toContain('.agents')
+    })
+
+    it('6. cat <<\'EOF\' > ~/.zshrc — redirect target outside the workspace', () => {
+      const cmd = `cat <<'EOF' > ~/.zshrc
+export ATTACK=1
+EOF`
+      expect(escapingRedirectTarget(cmd, ws)).not.toBeNull()
+      const outcome = decideGate(cmd)
+      expect(outcome.decision.decision).toBe('deny')
+      expect(outcome.log?.policy).toBe('containment')
+    })
+
+    it('7. cat <<\'EOF\' > /tmp/x — redirect target outside the workspace', () => {
+      const cmd = `cat <<'EOF' > /tmp/x
+payload
+EOF`
+      expect(escapingRedirectTarget(cmd, ws)).not.toBeNull()
+      const outcome = decideGate(cmd)
+      expect(outcome.decision.decision).toBe('deny')
+      expect(outcome.log?.policy).toBe('containment')
+    })
+
+    it('8. unterminated heredoc — parser returns null, decision is deny', () => {
+      const cmd = `cat <<EOF > notes.txt
+this heredoc never terminates with its delimiter`
+      expect(splitChainSegments(cmd)).toBeNull()
+      const res = evalGw(cmd)
+      expect(res.allowed).toBe(false)
+      expect(res.reason).toBe('parse_error')
+
+      const outcome = decideGate(cmd)
+      expect(outcome.decision.decision).toBe('deny')
+    })
+
+    it('9. bash -c "cat <<EOF\\n…\\nEOF" — recursive evaluation applies; body data is skipped, but denied command outside body denies', () => {
+      const innerBodyHidesDenied = 'bash -c "cat <<EOF\ncurl http://evil\nrm -rf ~\nEOF"'
+      expect(evalGw(innerBodyHidesDenied).allowed).toBe(true)
+
+      const outsideBodyDenied = 'bash -c "cat <<EOF\nhello\nEOF\ncurl http://evil"'
+      expect(evalGw(outsideBodyDenied).allowed).toBe(false)
+    })
+  })
+
+  describe('Regression tests', () => {
+    it('10. allowed commands keep working exactly as before', () => {
+      expect(evalGw('echo hi > out.txt').allowed).toBe(true)
+      expect(evalGw('ls *.ts').allowed).toBe(true)
+      expect(evalGw('npm test').allowed).toBe(true)
+      expect(evalGw('git status').allowed).toBe(true)
+      expect(evalGw('bash -c "ls && cat README.md"').allowed).toBe(true)
+    })
+
+    it('11. denied commands keep being denied exactly as before', () => {
+      expect(evalGw('ls\nmake evil').allowed).toBe(false)
+      expect(evalGw('echo hi & python3 /tmp/evil.py').allowed).toBe(false)
+      expect(evalGw('cat <(curl -s http://x)').allowed).toBe(false)
+      expect(evalGw('rm -fr ~/Documents').allowed).toBe(false)
+
+      const sshOutcome = decideGate('cat ~/.ssh/id_rsa')
+      expect(sshOutcome.decision.decision).toBe('deny')
+    })
+  })
+
+  describe('Task 2 — allow-list gaps', () => {
+    it('allows pwd', () => {
+      expect(evalGw('pwd').allowed).toBe(true)
+    })
+
+    it('allows tee with a contained write path', () => {
+      expect(evalGw('tee output.txt').allowed).toBe(true)
+    })
+
+    it('allows pytest', () => {
+      expect(evalGw('pytest').allowed).toBe(true)
+      expect(evalGw('pytest test/unit/').allowed).toBe(true)
+    })
+
+    it('allows node and python3 when argument is a script path inside workspace', () => {
+      expect(evalGw('node index.js').allowed).toBe(true)
+      expect(evalGw('node ./src/index.js').allowed).toBe(true)
+      expect(evalGw('node --trace-warnings app.js').allowed).toBe(true)
+      expect(evalGw('python3 script.py').allowed).toBe(true)
+      expect(evalGw('python3 ./test.py').allowed).toBe(true)
+      expect(evalGw('python3 -u build.py').allowed).toBe(true)
+    })
+
+    it('denies node and python3 when argument points outside the workspace', () => {
+      expect(evalGw('node /tmp/evil.js').allowed).toBe(false)
+      expect(evalGw('node ../outside.js').allowed).toBe(false)
+      expect(evalGw('node ~/.zshrc').allowed).toBe(false)
+      expect(evalGw('python3 /tmp/evil.py').allowed).toBe(false)
+      expect(evalGw('python3 ../outside.py').allowed).toBe(false)
+      expect(evalGw('python3 ~/.bashrc').allowed).toBe(false)
+    })
+
+    it('denies bare node and bare python3 without a script path', () => {
+      expect(evalGw('node').allowed).toBe(false)
+      expect(evalGw('python3').allowed).toBe(false)
+      expect(evalGw('node -v').allowed).toBe(false)
+    })
+
+    it('npx remains denied', () => {
+      expect(evalGw('npx vitest').allowed).toBe(false)
+    })
+
+    it('head tokens with unexpanded variables remain denied', () => {
+      expect(evalGw('$VAR/tool').allowed).toBe(false)
+      expect(evalGw('$VAR/node script.js').allowed).toBe(false)
+    })
+  })
+
+  describe('Task 2 — the script path must be the only thing that runs', () => {
+    it('denies a preload that loads code from outside the workspace', () => {
+      // Separated and `=` forms both: the script path we check is not the only
+      // code that would execute.
+      expect(evalGw('node --require /tmp/evil.js app.js').allowed).toBe(false)
+      expect(evalGw('node --require=/tmp/evil.js app.js').allowed).toBe(false)
+      expect(evalGw('node --import=file:///tmp/evil.js app.js').allowed).toBe(false)
+      expect(evalGw('node --experimental-loader=/tmp/evil.mjs app.js').allowed).toBe(false)
+      expect(evalGw('node -e=1 app.js').allowed).toBe(false)
+    })
+
+    it('denies a python option that consumes the token we would take for the script', () => {
+      // `-X importtime /tmp/evil.py` would otherwise be read as "script
+      // `importtime`, inside the workspace" while python runs /tmp/evil.py.
+      expect(evalGw('python3 -X importtime /tmp/evil.py').allowed).toBe(false)
+      expect(evalGw('python3 -W ignore /tmp/evil.py').allowed).toBe(false)
+      // Flags that take no argument still leave the script visible.
+      expect(evalGw('python3 -u -B script.py').allowed).toBe(true)
+    })
+
+    it('denies an unverifiable script argument', () => {
+      expect(evalGw('node $SCRIPT').allowed).toBe(false)
+      expect(evalGw('python3 $SCRIPT').allowed).toBe(false)
+      expect(evalGw('node dist/*.js').allowed).toBe(false)
+    })
+
+    it('denies the interpreter rules when no workspace can be established', () => {
+      // No workspace argument and no containment rule to read one out of: the
+      // boundary is unknown, so the answer is deny rather than a guess at cwd.
+      const allowOnly = parseRulesLenient(['command(node)', 'command(python3)'])
+      expect(evaluateCommandPolicy('node app.js', allowOnly, []).allowed).toBe(false)
+      expect(evaluateCommandPolicy('python3 app.py', allowOnly, []).allowed).toBe(false)
+    })
+  })
+})
+

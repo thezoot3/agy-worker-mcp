@@ -284,6 +284,12 @@ export function decide(input: GateDecideInput): GateOutcome {
       subject.value,
       parseRulesLenient(policy.allow),
       parseRulesLenient(policy.deny),
+      0,
+      // The workspace is a security boundary for the interpreter rules
+      // (`command(node)`, `command(python3)`), so it is passed rather than
+      // inferred: the gate runs as a hook agy spawns, and its own cwd is not
+      // guaranteed to be the workspace.
+      policy.workspace,
     )
     if (cmdEval.allowed) {
       const overwrite = commandOverwrite(policy, subject.value)

@@ -224,3 +224,42 @@ describe('precedence order', () => {
     expect(decideOutcome(input).outcome).toBe('failed')
   })
 })
+
+describe('stream interruption classification (PR6 §3)', () => {
+  it('classifies "The stream was interrupted" as a retryable warning while outcome stays failed', () => {
+    const input = baseInput({
+      exitCode: 0,
+      agentStatus: 'ERROR',
+      agentError: 'The stream was interrupted. Please continue the task you were working on.',
+      agentResponse: 'Task partially complete, writing file...',
+    })
+    const decision = decideOutcome(input)
+    expect(decision.outcome).toBe('failed')
+    expect(decision.warnings.some((w) => w.includes('retryable') && w.includes('stream interrupted'))).toBe(true)
+  })
+
+  it('detects stream interruption if carried via verification warnings', () => {
+    const input = baseInput({
+      exitCode: 0,
+      agentStatus: 'ERROR',
+      verification: emptyVerification({
+        warnings: ['The stream was interrupted. Please continue the task you were working on.'],
+      }),
+    })
+    const decision = decideOutcome(input)
+    expect(decision.outcome).toBe('failed')
+    expect(decision.warnings.some((w) => w.includes('retryable') && w.includes('stream interrupted'))).toBe(true)
+  })
+
+  it('ordinary ERROR without stream interruption is failed without retryable warning', () => {
+    const input = baseInput({
+      exitCode: 1,
+      agentStatus: 'ERROR',
+      agentError: 'Cannot find module ./app.js',
+    })
+    const decision = decideOutcome(input)
+    expect(decision.outcome).toBe('failed')
+    expect(decision.warnings.some((w) => w.includes('retryable'))).toBe(false)
+  })
+})
+

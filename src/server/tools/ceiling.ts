@@ -91,7 +91,7 @@ export async function handleCeiling(ctx: ToolContext, input: CeilingInput): Prom
       const allowRules = parseRulesLenient(effective.allow)
       const denyRules = parseRulesLenient(effective.deny)
       preflight = input.expected_commands.map((command) => {
-        const r = evaluateCommandPolicy(command, allowRules, denyRules)
+        const r = evaluateCommandPolicy(command, allowRules, denyRules, 0, effective.workspace)
         return {
           command,
           decision: r.allowed ? 'allow' : 'deny',

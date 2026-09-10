@@ -451,7 +451,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       let deniedCount = 0
 
       for (const cmd of input.expected_commands) {
-        const evalRes = evaluateCommandPolicy(cmd, allowRules, denyRules)
+        const evalRes = evaluateCommandPolicy(cmd, allowRules, denyRules, 0, policy.workspace)
         const decision: 'allow' | 'deny' = evalRes.allowed ? 'allow' : 'deny'
         if (!evalRes.allowed) {
           deniedCount++
