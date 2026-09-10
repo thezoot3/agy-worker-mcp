@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 /**
- * `agy-worker-setup` — put the package's Claude Code pieces where Claude Code
- * looks for them. The MCP server registers with `claude mcp add`; the skill
- * (`skills/agy-ceiling`) and the slash command (`commands/agy-ceiling.md`)
- * have to be copied into `.claude/` by hand — npm has no hook for that, and a
- * `postinstall` that wrote into the user's home would be exactly the kind of
- * unrequested write this project refuses to make. So it is a command you run
- * once, and it prints what it did.
+ * `agy-worker-setup` — put the package's Claude Code and Codex pieces where they
+ * belong. Writes the stable spawn-time launcher to <stateHome>/bin/agy-worker-mcp,
+ * installs skills and commands, and prints client configuration blocks.
+ * Run with `--doctor` to diagnose installation issues.
  */
+import { doctor } from './setup/doctor.js'
 import { install, parseSetupArgs, usage } from './setup/install.js'
 
 const parsed = parseSetupArgs(process.argv.slice(2))
@@ -18,6 +16,11 @@ if (parsed.kind === 'help') {
 if (parsed.kind === 'error') {
   process.stderr.write(`${parsed.message}\n\n${usage()}`)
   process.exit(2)
+}
+if (parsed.kind === 'doctor') {
+  const report = doctor(parsed.options)
+  process.stdout.write(report.text)
+  process.exit(report.ok ? 0 : 1)
 }
 const report = install(parsed.options)
 process.stdout.write(report.text)

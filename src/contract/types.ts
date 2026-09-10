@@ -1275,7 +1275,10 @@ export interface Capabilities {
     max_response_bytes: number
     max_log_tail_lines: number
   }
-  agy_bin: string
+  /** The resolved agy executable, or null when none was found. */
+  agy_bin: string | null
+  /** Every location searched for it; present only when `agy_bin` is null. */
+  agy_bin_searched?: string[]
   /** False when the configured binary is missing; `agy_start` will fail. */
   agy_bin_present: boolean
   /** The connected client's own `initialize` declaration. See {@link ClientSnapshot}. */

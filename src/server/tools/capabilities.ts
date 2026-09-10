@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { SCHEMA_VERSION, type Capabilities, type ModelCapability } from '../../contract/types.js'
 import { ceilingPath, describeCeiling, loadCeiling } from '../../policy/ceiling.js'
 import { describeProfiles } from '../../policy/profiles.js'
-import { resolveAgyBin } from '../../runner/spawn.js'
+import { agySearchLocations, resolveAgyBin } from '../../runner/spawn.js'
 import { reconcile } from '../../broker/reconcile.js'
 import { errorReply, reply, type ToolContext, type ToolReply } from '../context.js'
 
@@ -90,7 +90,16 @@ export async function handleCapabilities(
 ): Promise<ToolReply> {
   try {
     await reconcile(ctx.store)
-    const agyBin = resolveAgyBin()
+    // `resolveAgyBin` throws when nothing is found, which is right for a job
+    // that is about to spawn it and wrong here: "agy is not installed" is one
+    // of the facts this call exists to report, and a caller who cannot see
+    // profiles or limits because of it is worse off, not safer.
+    let agyBin: string | null = null
+    try {
+      agyBin = resolveAgyBin()
+    } catch {
+      agyBin = null
+    }
     const ceilingFile = ceilingPath(ctx.paths)
     const ceilingPresent = existsSync(ceilingFile)
     // Not wrapped separately: an invalid policy.json should surface here too
@@ -116,7 +125,8 @@ export async function handleCapabilities(
       on_denial: ['abort', 'continue', 'guide'],
       limits: ctx.limits,
       agy_bin: agyBin,
-      agy_bin_present: checkAgyBinPresent(agyBin),
+      agy_bin_present: agyBin !== null && checkAgyBinPresent(agyBin),
+      ...(agyBin === null ? { agy_bin_searched: agySearchLocations() } : {}),
       client: ctx.getClient?.() ?? null,
     }
     return reply(caps)

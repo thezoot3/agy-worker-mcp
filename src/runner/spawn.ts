@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process'
-import { chmodSync, closeSync, openSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { accessSync, chmodSync, closeSync, constants, openSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import type { Writable } from 'node:stream'
 
 import { FORBIDDEN_AGY_FLAGS, ENV, type EffectiveConfig } from '../contract/types.js'
@@ -201,10 +202,50 @@ export function buildChildEnv(
   return env
 }
 
-/** Resolved agy executable: `AGY_WORKER_AGY_BIN`, else `agy` from PATH. */
-export function resolveAgyBin(): string {
-  const override = process.env[ENV.AGY_BIN]
-  return override && override.trim() ? override.trim() : 'agy'
+function isExecutableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Diagnostic listing of every location searched for the `agy` binary:
+ * all directories in PATH, followed by known fallback locations.
+ */
+export function agySearchLocations(baseEnv: NodeJS.ProcessEnv = process.env): string[] {
+  const pathDirs = (baseEnv.PATH ?? '').split(':').filter(Boolean).map((d) => join(d, 'agy'))
+  const home = baseEnv.HOME ?? homedir()
+  const known = [
+    join(home, '.local', 'bin', 'agy'),
+    '/opt/homebrew/bin/agy',
+    '/usr/local/bin/agy',
+  ]
+  return [...pathDirs, ...known]
+}
+
+/**
+ * Resolved agy executable:
+ * 1. `AGY_WORKER_AGY_BIN` env override
+ * 2. PATH lookup
+ * 3. Known locations (`$HOME/.local/bin/agy`, `/opt/homebrew/bin/agy`, `/usr/local/bin/agy`)
+ *
+ * @throws {Error} if agy is not found, listing every searched location.
+ */
+export function resolveAgyBin(baseEnv: NodeJS.ProcessEnv = process.env): string {
+  const override = baseEnv[ENV.AGY_BIN]
+  if (override && override.trim()) return override.trim()
+
+  const locations = agySearchLocations(baseEnv)
+  for (const candidate of locations) {
+    if (isExecutableFile(candidate)) return candidate
+  }
+
+  throw new Error(
+    `agy binary not found; searched PATH and known locations:\n  ${locations.join('\n  ')}`,
+  )
 }
 
 export interface SpawnAgyOptions {
