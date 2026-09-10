@@ -9,6 +9,7 @@ import { ceilingPath, describeCeiling, loadCeiling } from '../../policy/ceiling.
 import { describeProfiles } from '../../policy/profiles.js'
 import { agySearchLocations, resolveAgyBin } from '../../runner/spawn.js'
 import { reconcile } from '../../broker/reconcile.js'
+import { listJobWorktrees } from '../../workspace/worktree.js'
 import { errorReply, reply, type ToolContext, type ToolReply } from '../context.js'
 
 /**
@@ -141,6 +142,12 @@ export async function handleCapabilities(
       )
     }
 
+    // `on_finish: 'keep'` is the default, so a caller who never releases leaves
+    // worktrees behind and has no other way to find out.
+    const jobWorktrees = listJobWorktrees(ctx.paths.root)
+    const worktrees =
+      jobWorktrees.length > 0 ? { count: jobWorktrees.length, paths: jobWorktrees } : undefined
+
     const caps: Capabilities = {
       server_version: ctx.version,
       schema_version: SCHEMA_VERSION,
@@ -163,6 +170,7 @@ export async function handleCapabilities(
       agy_bin_present: agyBin !== null && checkAgyBinPresent(agyBin),
       ...(agyBin === null ? { agy_bin_searched: agySearchLocations() } : {}),
       client: ctx.getClient?.() ?? null,
+      ...(worktrees ? { worktrees } : {}),
       warnings,
     }
     return reply(caps)

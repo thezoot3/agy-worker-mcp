@@ -19,7 +19,7 @@ import {
   stateHome,
   writeJsonAtomic,
 } from '../../contract/paths.js'
-import type { EffectiveConfig, JobRequest } from '../../contract/types.js'
+import type { EffectiveConfig, JobRequest, WorkspaceInfo } from '../../contract/types.js'
 import { describePolicy } from '../../broker/blockers.js'
 import { cleanupOldJobs, reconcile } from '../../broker/reconcile.js'
 import { ensureGateHook } from '../../gate/hooks-file.js'
@@ -159,6 +159,10 @@ export const startInput = z.object({
     .refine((v) => !v.startsWith('-'), 'must not look like a CLI flag')
     .optional()
     .describe('git ref to branch the worktree from (default "HEAD"). isolation "worktree" only.'),
+  on_finish: z
+    .enum(['keep', 'remove'])
+    .optional()
+    .describe('What to do with the worktree when the job finishes: "keep" (default) or "remove". isolation "worktree" only.'),
   dry_run: z
     .boolean()
     .optional()
@@ -284,6 +288,14 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
         field: 'base_ref',
         value: input.base_ref,
         expected: 'base_ref requires isolation: "worktree"',
+      })
+    }
+
+    if (input.on_finish !== undefined && isolation !== 'worktree') {
+      throw new ValidationError({
+        field: 'on_finish',
+        value: input.on_finish,
+        expected: 'on_finish requires isolation: "worktree"',
       })
     }
 
@@ -580,7 +592,29 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
         env,
         created_at: now,
         worktree: worktreeConfig,
+        on_finish: isolation === 'worktree' ? (input.on_finish ?? 'keep') : null,
       }
+
+      const workspaceInfo: WorkspaceInfo =
+        isolation === 'worktree'
+          ? {
+              kind: 'worktree',
+              path: effectiveWorkspace,
+              branch: `agy/${jobId}`,
+              base_commit: baseCommit,
+              head_commit: baseCommit,
+              committed: false,
+              changed_file_count: 0,
+            }
+          : {
+              kind: 'in_place',
+              path: effectiveWorkspace,
+              branch: null,
+              base_commit: null,
+              head_commit: null,
+              committed: false,
+              changed_file_count: 0,
+            }
 
       // Same three fields on both replies, from one builder: what the policy
       // ended up as, what the request lost on the way there, and that rendered
@@ -656,17 +690,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
           warnings,
           ...(preflight ? { preflight } : {}),
           effective_config: effectiveConfig,
-          ...(isolation === 'worktree'
-            ? {
-                workspace_preview: {
-                  kind: 'worktree',
-                  path: effectiveWorkspace,
-                  branch: `agy/${jobId}`,
-                  base_ref: baseRef,
-                  link_paths: ceiling.link_paths,
-                },
-              }
-            : {}),
+          workspace: workspaceInfo,
         })
       }
 
@@ -753,6 +777,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
         policy_summary: described.policy_summary,
         blockers: described.blockers,
         warnings,
+        workspace: workspaceInfo,
         dry_run: false,
       })
     } catch (e) {

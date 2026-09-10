@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, symlinkSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
 import { ValidationError } from '../contract/errors.js'
-import { canonicalize } from '../contract/paths.js'
+import { canonicalize, isWithin } from '../contract/paths.js'
+import { isHousekeepingPorcelainLine } from '../broker/verify.js'
 
 export interface WorktreeCreation {
   path: string
@@ -175,5 +176,70 @@ export function removeJobWorktree(input: {
         })
       }
     }
+  }
+}
+
+/**
+ * Uncommitted changed files in the worktree, ignoring the housekeeping we write
+ * ourselves (`.agents/`, `.worktrees/`).
+ *
+ * `null` means "could not tell" — git failed, or timed out. Every caller of this
+ * is deciding whether to delete a directory, so an unreadable status must not
+ * read as "clean": a fail-open zero here would delete a worktree whose unmerged
+ * work is the entire output of a job. `0` is only returned when git actually
+ * said so, or when the directory is already gone and there is nothing to lose.
+ */
+export function worktreeStatus(path: string): number | null {
+  if (!existsSync(path)) return 0
+  try {
+    const res = spawnSync('git', ['status', '--porcelain'], {
+      cwd: path,
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+    if (res.status !== 0) return null
+    return res.stdout
+      .split('\n')
+      .map((l) => l.trimEnd())
+      .filter((l) => l.length > 0 && !isHousekeepingPorcelainLine(l)).length
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every worktree this server would have created, live or abandoned, taken from
+ * git's own list rather than from the job table — a worktree whose job row was
+ * cleaned up a week ago is exactly the one nobody would otherwise hear about
+ * again.
+ */
+export function listJobWorktrees(root: string): string[] {
+  try {
+    const res = spawnSync('git', ['worktree', 'list', '--porcelain'], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    if (res.status !== 0) return []
+
+    const dotWorktrees = canonicalize(join(root, '.worktrees'))
+    const paths: string[] = []
+    for (const line of res.stdout.split('\n')) {
+      if (line.startsWith('worktree ')) {
+        const rawPath = line.slice(9).trim()
+        if (rawPath) {
+          try {
+            const canon = canonicalize(rawPath)
+            if (isWithin(canon, dotWorktrees) && canon !== dotWorktrees) {
+              paths.push(canon)
+            }
+          } catch {
+            // Tolerate unresolvable paths
+          }
+        }
+      }
+    }
+    return paths
+  } catch {
+    return []
   }
 }

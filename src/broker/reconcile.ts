@@ -1,6 +1,7 @@
-import { readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 
 import type { EffectiveConfig, JobRow, JobStateFile } from '../contract/types.js'
+import { removeJobWorktree, worktreeStatus } from '../workspace/worktree.js'
 import { jobPaths, readJsonIfExists } from '../contract/paths.js'
 import { readLinesFrom } from '../events/cursor.js'
 import { okEvents, parseEventLines } from '../events/parse.js'
@@ -392,9 +393,40 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
     gateConfirmed,
     finishedAt,
     now: flags.nowMs,
+    worktree: config?.worktree ?? null,
   })
 
+  // on_finish: 'remove' removes clean worktrees automatically, but keeps dirty
+  // ones and warns rather than silently destroying unmerged work.
+  if (config?.worktree && config.on_finish === 'remove') {
+    if (result.verification.changed_files.length > 0) {
+      result.verification.warnings.push(
+        `worktree at ${config.worktree.path} has uncommitted changes and was kept despite on_finish: "remove"`,
+      )
+    }
+  }
+
   writeBrokerResult(paths, result)
+
+  if (config?.worktree && config.on_finish === 'remove') {
+    if (result.verification.changed_files.length === 0) {
+      try {
+        removeJobWorktree({
+          root: store.paths.root,
+          path: config.worktree.path,
+          branch: config.worktree.branch,
+          // `changed_files` is already empty, so the only thing left in the tree
+          // is the `.agents/hooks.json` this server wrote — which plain
+          // `git worktree remove` still refuses to delete. Forcing here removes
+          // our own housekeeping, never the caller's work.
+          force: true,
+        })
+      } catch {
+        // Best effort: worktree cleanup failure must never fail finalization.
+      }
+    }
+  }
+
   releaseJobLocks(store, job.job_id)
 
   // Write the conversation id back to the session the moment the broker result
@@ -462,6 +494,27 @@ export function cleanupOldJobs(store: Store, maxAgeMs: number): number {
     if (ts >= cutoff) continue
 
     const paths = jobPaths(store.paths, job.job_id)
+    const config = readJsonIfExists<EffectiveConfig>(paths.effectiveConfig)
+    if (config?.worktree && existsSync(config.worktree.path)) {
+      try {
+        // `null` is "git would not say", which here has to mean "keep it".
+        // Silently deleting a week-old worktree that still holds unmerged work
+        // is far worse than leaving a directory on disk, and
+        // `agy_capabilities.worktrees` reports whatever stays.
+        const changedCount = worktreeStatus(config.worktree.path)
+        if (changedCount === 0) {
+          removeJobWorktree({
+            root: store.paths.root,
+            path: config.worktree.path,
+            branch: config.worktree.branch,
+            force: true,
+          })
+        }
+      } catch {
+        // Best effort: worktree cleanup failure must not prevent job deletion.
+      }
+    }
+
     try {
       rmSync(paths.dir, { recursive: true, force: true })
     } catch {

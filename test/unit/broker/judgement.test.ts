@@ -332,7 +332,7 @@ describe('a broker-result.json written by 0.1.0', () => {
 
     const migrated = migrateBrokerResult(legacy, '/tmp/broker-result.json')
 
-    expect(migrated.schema_version).toBe(3)
+    expect(migrated.schema_version).toBe(4)
     expect(migrated.job_id).toBe('old-job')
     expect(migrated.verification.blockers.map((b) => b.source)).toEqual(['gate', 'sandbox', 'broker'])
     // Nothing the old lists carried is dropped.
@@ -365,7 +365,7 @@ describe('a broker-result.json written at schema_version 2 (PR6, verify added at
 
     const migrated = migrateBrokerResult(v2, '/tmp/broker-result.json')
 
-    expect(migrated.schema_version).toBe(3)
+    expect(migrated.schema_version).toBe(4)
     expect(migrated.job_id).toBe('v2-job')
     expect(migrated.verification.verify).toBeNull()
     expect(migrated.verification.changed_files).toEqual(['M src/foo.ts'])

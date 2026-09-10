@@ -117,4 +117,9 @@ verify_command
   output_tail is only the last 2 KiB; the full log is
   jobs/<job_id>/verify.log on disk. verify: null means no verify_command was
   configured (or the job's own deadline killed agy first, which skips verify
-  entirely).`
+  entirely).
+
+worktree isolation
+  A worktree job's changes live on its branch. The job cannot commit them — the
+  ceiling denies git add and git commit — so the caller merges the branch. Call
+  agy_release_workspace afterwards to remove the worktree and delete the branch.`

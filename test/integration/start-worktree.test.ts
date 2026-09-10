@@ -24,18 +24,14 @@ afterEach(() => {
   rmSync(project.fakeStateDir, { recursive: true, force: true })
 })
 
+import type { WorkspaceInfo } from '../../src/contract/types.js'
+
 interface StartSuccessReply {
   job_id: string
   session_id: string
   cwd: string
   dry_run: boolean
-  workspace_preview?: {
-    kind: string
-    path: string
-    branch: string
-    base_ref: string
-    link_paths: string[]
-  }
+  workspace?: WorkspaceInfo
 }
 
 interface StartErrorReply {
@@ -49,7 +45,7 @@ interface StartErrorReply {
 }
 
 describe('start tool with isolation: "worktree"', () => {
-  it('10. isolation: "worktree" with base_ref set and dry_run: true returns workspace_preview and creates no .worktrees directory', async () => {
+  it('10. isolation: "worktree" with base_ref set and dry_run: true returns workspace block and creates no .worktrees directory', async () => {
     const ctx = createContext()
     try {
       const res = await handleStart(ctx, {
@@ -60,12 +56,12 @@ describe('start tool with isolation: "worktree"', () => {
       })
       expect(res.isError).toBeFalsy()
       const reply = replyJson<StartSuccessReply>(res)
-      expect(reply.workspace_preview).toBeDefined()
-      expect(reply.workspace_preview?.kind).toBe('worktree')
-      expect(reply.workspace_preview?.base_ref).toBe('HEAD')
-      expect(reply.workspace_preview?.branch).toBe(`agy/${reply.job_id}`)
-      expect(reply.workspace_preview?.path).toBe(join(canonicalize(project.root), '.worktrees', `agy-${reply.job_id}`))
-      expect(Array.isArray(reply.workspace_preview?.link_paths)).toBe(true)
+      expect(reply.workspace).toBeDefined()
+      expect(reply.workspace?.kind).toBe('worktree')
+      expect(reply.workspace?.branch).toBe(`agy/${reply.job_id}`)
+      expect(reply.workspace?.path).toBe(join(canonicalize(project.root), '.worktrees', `agy-${reply.job_id}`))
+      expect(reply.workspace?.committed).toBe(false)
+      expect(reply.workspace?.changed_file_count).toBe(0)
 
       // Ensure no .worktrees directory was created on disk in dry_run
       expect(existsSync(join(project.root, '.worktrees'))).toBe(false)
@@ -131,6 +127,44 @@ describe('start tool with isolation: "worktree"', () => {
       expect(err.detail?.expected).toContain(
         'omit cwd, or pass the project root: isolation "worktree" makes a worktree of the whole repository',
       )
+    } finally {
+      ctx.store.db.close()
+    }
+  })
+
+  it('4. on_finish without isolation is a ValidationError on field on_finish', async () => {
+    const ctx = createContext()
+    try {
+      const res = await handleStart(ctx, {
+        prompt: 'test on_finish without isolation',
+        on_finish: 'remove',
+        dry_run: true,
+      })
+      expect(res.isError).toBe(true)
+      const err = replyJson<StartErrorReply>(res)
+      expect(err.error).toBe('VALIDATION')
+      expect(err.detail?.field).toBe('on_finish')
+    } finally {
+      ctx.store.db.close()
+    }
+  })
+
+  it('5. agy_start with isolation: "worktree" replies with a workspace block whose kind is "worktree", committed is false and changed_file_count is 0', async () => {
+    const ctx = createContext()
+    try {
+      const res = await handleStart(ctx, {
+        prompt: 'test worktree real start',
+        isolation: 'worktree',
+        base_ref: 'HEAD',
+      })
+      expect(res.isError).toBeFalsy()
+      const reply = replyJson<StartSuccessReply>(res)
+      expect(reply.workspace).toBeDefined()
+      expect(reply.workspace?.kind).toBe('worktree')
+      expect(reply.workspace?.committed).toBe(false)
+      expect(reply.workspace?.changed_file_count).toBe(0)
+      expect(reply.workspace?.branch).toBe(`agy/${reply.job_id}`)
+      expect(existsSync(reply.workspace!.path)).toBe(true)
     } finally {
       ctx.store.db.close()
     }

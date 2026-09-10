@@ -41,11 +41,33 @@ export const MAX_RUNNING_JOBS_CAP = 12
  * became the single `verification.blockers` list.
  * 2 → 3: `verification.verify` was added (PR6, `verify_command`) — `null` on a
  * migrated file, since no pre-0.2.0 job ever ran a verify command.
+ * 3 → 4: `workspace` was added (PR3, worktree isolation and merge handoff) —
+ * `{ kind: 'in_place', ... }` on a migrated file, since no released version
+ * could produce a worktree job.
  * `loadBrokerResult` migrates an older file in memory rather than failing, so a
  * job directory written by an earlier release stays readable; an unknown
  * *newer* version is refused loudly instead.
  */
-export const BROKER_RESULT_VERSION = 3
+export const BROKER_RESULT_VERSION = 4
+
+/**
+ * Where a job's changes actually are, and what still has to happen to them.
+ * Reported rather than inferred: an `in_place` job's caller already owns the
+ * tree, while a `worktree` job's caller has a branch to merge and a directory
+ * to release, and nothing else in the reply distinguishes the two.
+ */
+export interface WorkspaceInfo {
+  kind: 'in_place' | 'worktree'
+  path: string
+  /** The job's branch, or null for `in_place`. */
+  branch: string | null
+  base_commit: string | null
+  /** The worktree's HEAD when the job finished. Equal to `base_commit` unless something committed. */
+  head_commit: string | null
+  /** Always false: a job has no permission to commit its own work. */
+  committed: false
+  changed_file_count: number
+}
 
 /** Environment variables this package reads. Nothing else may be consulted. */
 export const ENV = {
@@ -726,6 +748,8 @@ export interface JobRequest {
   isolation?: 'in_place' | 'worktree'
   /** git ref to branch the worktree from (default 'HEAD'). isolation 'worktree' only. */
   base_ref?: string
+  /** What to do with the worktree when the job finishes: 'keep' (default) or 'remove'. isolation 'worktree' only. */
+  on_finish?: 'keep' | 'remove'
 }
 
 /**
@@ -812,6 +836,10 @@ export interface EffectiveConfig {
     base_commit: string
     linked: string[]
   } | null
+  /**
+   * What to do with the worktree when the job finishes. Only set when worktree is present.
+   */
+  on_finish?: 'keep' | 'remove' | null
 }
 
 /** `jobs/<id>/state.json` — written atomically by the runner. */
@@ -1103,6 +1131,7 @@ export interface BrokerResult {
   /** Verified facts. */
   broker_summary: BrokerSummary
   verification: Verification
+  workspace: WorkspaceInfo
   agent_status: AgentStatus
   contract_status: ContractStatus
   /** Raw structured output when `--json-schema` was used; preserved even if invalid. */
@@ -1336,6 +1365,11 @@ export interface Capabilities {
   agy_bin_present: boolean
   /** The connected client's own `initialize` declaration. See {@link ClientSnapshot}. */
   client: ClientSnapshot | null
+  /** Job worktrees still on disk under `<root>/.worktrees/`, live or abandoned. Absent when there are none. */
+  worktrees?: {
+    count: number
+    paths: string[]
+  }
   /** Degenerate project root or configuration warnings. */
   warnings: string[]
 }

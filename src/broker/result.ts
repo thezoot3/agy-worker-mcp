@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process'
+
 import type {
   AgentReport,
   AgyEvent,
@@ -8,6 +10,7 @@ import type {
   JobRow,
   JudgementPacket,
   Verification,
+  WorkspaceInfo,
 } from '../contract/types.js'
 import { BROKER_RESULT_VERSION } from '../contract/types.js'
 import { ValidationError } from '../contract/errors.js'
@@ -69,6 +72,14 @@ export interface BuildResultInput {
    */
   finishedAt?: number | null
   now: number
+  /** Worktree configuration if the job ran in an isolated worktree. */
+  worktree?: {
+    path: string
+    branch: string
+    base_ref: string
+    base_commit: string
+    linked: string[]
+  } | null
 }
 
 const DEFAULT_LOG_TAIL_LINES = 40
@@ -128,8 +139,49 @@ export function buildBrokerResult(store: Store, input: BuildResultInput): Broker
   const finishedAt = input.finishedAt ?? input.now
   const durationMs = input.job.started_at !== null ? Math.max(0, finishedAt - input.job.started_at) : null
 
+  const worktree = input.worktree ?? null
+  let workspace: WorkspaceInfo
+  if (worktree) {
+    let headCommit: string | null = null
+    try {
+      const rev = spawnSync('git', ['rev-parse', 'HEAD'], {
+        cwd: worktree.path,
+        encoding: 'utf8',
+      })
+      if (rev.status === 0) {
+        headCommit = rev.stdout.trim() || null
+      }
+    } catch {
+      headCommit = null
+    }
+    workspace = {
+      kind: 'worktree',
+      path: worktree.path,
+      branch: worktree.branch,
+      base_commit: worktree.base_commit,
+      head_commit: headCommit,
+      committed: false,
+      changed_file_count: verification.changed_files.length,
+    }
+  } else {
+    workspace = {
+      kind: 'in_place',
+      path: input.job.cwd,
+      branch: null,
+      base_commit: null,
+      head_commit: null,
+      committed: false,
+      changed_file_count: verification.changed_files.length,
+    }
+  }
+
+  let headline = decision.headline
+  if (workspace.kind === 'worktree' && workspace.changed_file_count > 0) {
+    headline = `${headline.replace(/\.?$/, '')}; changes live in worktree agy/${input.job.job_id}; the caller merges`
+  }
+
   const brokerSummary: BrokerSummary = {
-    headline: decision.headline,
+    headline,
     outcome: decision.outcome,
     exit_code: input.exitCode,
     duration_ms: durationMs,
@@ -152,6 +204,7 @@ export function buildBrokerResult(store: Store, input: BuildResultInput): Broker
     agent_report: agentReport,
     broker_summary: brokerSummary,
     verification,
+    workspace,
     agent_status: agentReport.status,
     contract_status: decision.contract_status,
     structured_output: null,
@@ -234,7 +287,9 @@ export function loadBrokerResult(paths: JobPaths): BrokerResult | null {
  * `verification.environment_blocks`; version 2 collapsed those into the single
  * `verification.blockers`; version 3 adds `verification.verify` (PR6,
  * `verify_command`) — always `null` on a migrated file, since no job written
- * before 0.2.0 ever ran a verify command. The version-1 migration runs the
+ * before 0.2.0 ever ran a verify command; version 4 adds `workspace` (PR3,
+ * worktree isolation and merge handoff) — filled with in_place defaults,
+ * since earlier releases only supported in_place. The version-1 migration runs the
  * same constructors the live path uses, so an old job is judged by exactly
  * today's rules — and nothing in the old records is dropped, since each one is
  * carried in `Blocker.detail`.
@@ -242,11 +297,11 @@ export function loadBrokerResult(paths: JobPaths): BrokerResult | null {
 export function migrateBrokerResult(raw: BrokerResult, path: string): BrokerResult {
   const version = raw.schema_version
   if (version === BROKER_RESULT_VERSION) return raw
-  if (version !== 1 && version !== 2) {
+  if (version !== 1 && version !== 2 && version !== 3) {
     throw new ValidationError({
       field: `schema_version of ${path}`,
       value: version,
-      expected: `a broker-result.json version this server can read (1, 2 or ${BROKER_RESULT_VERSION}) — this file was written by a newer server`,
+      expected: `a broker-result.json version this server can read (1, 2, 3 or ${BROKER_RESULT_VERSION}) — this file was written by a newer server`,
     })
   }
 
@@ -271,15 +326,29 @@ export function migrateBrokerResult(raw: BrokerResult, path: string): BrokerResu
       checked_at: legacy.checked_at,
       verify: null,
     }
-  } else {
+  } else if (version === 2) {
     // version === 2: everything but `verify` is already in today's shape.
     verification = { ...raw.verification, verify: null }
+  } else {
+    // version === 3: verification already has verify.
+    verification = raw.verification
+  }
+
+  const workspace: WorkspaceInfo = raw.workspace ?? {
+    kind: 'in_place',
+    path: raw.cwd,
+    branch: null,
+    base_commit: null,
+    head_commit: null,
+    committed: false,
+    changed_file_count: verification.changed_files.length,
   }
 
   return {
     ...raw,
     schema_version: BROKER_RESULT_VERSION,
     verification,
+    workspace,
   }
 }
 

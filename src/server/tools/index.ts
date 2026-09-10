@@ -13,6 +13,7 @@ import { listJobsInput, handleListJobs } from './listJobs.js'
 import { sessionsInput, handleSessions } from './sessions.js'
 import { capabilitiesInput, handleCapabilities } from './capabilities.js'
 import { ceilingInput, handleCeiling } from './ceiling.js'
+import { releaseWorkspaceInput, handleReleaseWorkspace } from './releaseWorkspace.js'
 
 export * from './start.js'
 export * from './wait.js'
@@ -24,13 +25,14 @@ export * from './listJobs.js'
 export * from './sessions.js'
 export * from './capabilities.js'
 export * from './ceiling.js'
+export * from './releaseWorkspace.js'
 
 /**
- * MCP tool annotations for the ten tools.
+ * MCP tool annotations for the eleven tools.
  *
  * Read-only: wait, result, logs, list_jobs, sessions, capabilities.
  * Idempotent: everything except `agy_start` and `agy_send`, which each append.
- * Destructive: `agy_cancel`. Open-world: `agy_start`, which runs an external agent.
+ * Destructive: `agy_cancel`, `agy_release_workspace`. Open-world: `agy_start`, which runs an external agent.
  */
 export interface ToolAnnotations {
   title?: string
@@ -51,6 +53,7 @@ export const TOOL_NAMES = [
   'agy_sessions',
   'agy_capabilities',
   'agy_ceiling',
+  'agy_release_workspace',
 ] as const
 
 export type ToolName = (typeof TOOL_NAMES)[number]
@@ -103,10 +106,15 @@ export const TOOL_ANNOTATIONS: Readonly<Record<ToolName, ToolAnnotations>> = Obj
     readOnlyHint: true,
     idempotentHint: true,
   },
+  agy_release_workspace: {
+    title: 'Release job workspace',
+    destructiveHint: true,
+    idempotentHint: true,
+  },
 })
 
 /**
- * Register all ten tools.
+ * Register all eleven tools.
  *
  * Every handler must call `broker.reconcile()` on entry — that is the only thing
  * standing in for a daemon. Each `handle*` function in this
@@ -203,5 +211,11 @@ export function registerAllTools(server: McpServer, ctx: ToolContext): void {
     'Read-only helper for proposing the project permission ceiling (policy.json). Without draft: current file, effective general_worker policy, and denial history across jobs. With draft: whether the file would load, advisory warnings, a risk class per rule, and how expected_commands would be judged. Never writes the file — show the draft to the user and let them approve it.',
     ceilingInput.shape,
     handleCeiling,
+  )
+  register(
+    'agy_release_workspace',
+    'Remove a finished job\'s git worktree and delete its branch after merging. Destructive and idempotent.',
+    releaseWorkspaceInput.shape,
+    handleReleaseWorkspace,
   )
 }

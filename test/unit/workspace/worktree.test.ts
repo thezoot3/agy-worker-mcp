@@ -9,7 +9,7 @@ import type { EffectivePolicy, JobRow } from '../../../src/contract/types.js'
 import { decide } from '../../../src/gate/gate.js'
 import { EMPTY_CEILING } from '../../../src/policy/ceiling.js'
 import { resolvePolicy } from '../../../src/policy/profiles.js'
-import { createJobWorktree, removeJobWorktree } from '../../../src/workspace/worktree.js'
+import { createJobWorktree, removeJobWorktree, worktreeStatus } from '../../../src/workspace/worktree.js'
 
 let hasGit = false
 try {
@@ -174,6 +174,45 @@ describe('createJobWorktree and removeJobWorktree', () => {
         branch: creation.branch,
       }),
     ).not.toThrow()
+  })
+
+  it.skipIf(!hasGit)('7. worktreeStatus counts an uncommitted file and reports zero on a clean worktree', () => {
+    const jobId = 'test-job-7'
+    const creation = createJobWorktree({
+      root: repo,
+      jobId,
+      baseRef: 'HEAD',
+      linkPaths: [],
+    })
+
+    // Clean worktree: 0 changed files
+    expect(worktreeStatus(creation.path)).toBe(0)
+
+    // Add an uncommitted file
+    writeFileSync(join(creation.path, 'uncommitted.txt'), 'hello')
+    expect(worktreeStatus(creation.path)).toBe(1)
+
+    // Remove worktree
+    removeJobWorktree({
+      root: repo,
+      path: creation.path,
+      branch: creation.branch,
+      force: true,
+    })
+  })
+
+  /**
+   * Every caller of `worktreeStatus` is deciding whether to delete a directory,
+   * so "git would not answer" has to be distinguishable from "nothing changed".
+   * A fail-open zero would delete a worktree whose unmerged work is the entire
+   * output of a job.
+   */
+  it('reports null when git cannot answer, and 0 when there is nothing to lose', () => {
+    const notARepository = join(tempDir, 'not-a-repository')
+    mkdirSync(notARepository, { recursive: true })
+    expect(worktreeStatus(notARepository)).toBeNull()
+
+    expect(worktreeStatus(join(tempDir, 'never-existed'))).toBe(0)
   })
 })
 

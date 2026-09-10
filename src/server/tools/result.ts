@@ -80,6 +80,7 @@ export async function handleResult(ctx: ToolContext, input: ResultInput): Promis
         session_id: result.session_id,
         lifecycle: result.lifecycle,
         broker_summary: result.broker_summary,
+        workspace: result.workspace,
         agent_status: result.agent_status,
         contract_status: result.contract_status,
       })
