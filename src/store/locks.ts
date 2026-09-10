@@ -1,4 +1,4 @@
-import type { LockRow, LockScope } from '../contract/types.js'
+import { MAX_RUNNING_JOBS_CAP, type LockRow, type LockScope } from '../contract/types.js'
 import { LockConflictError, type LockConflictDetail } from '../contract/errors.js'
 import { canonicalize } from '../contract/paths.js'
 import { isPidAlive, isSameProcess } from '../runner/reap.js'
@@ -8,6 +8,9 @@ import { countLiveJobs, tryGetJob, LIVE_LIFECYCLES } from './jobs.js'
 
 /** Default per-project concurrency ceiling. */
 export const DEFAULT_MAX_RUNNING = 3
+
+export { MAX_RUNNING_JOBS_CAP }
+
 
 /** Everything one job needs, acquired together or not at all. */
 export interface JobLockRequest {
@@ -19,6 +22,10 @@ export interface JobLockRequest {
   sessionId?: string | null
   /** Ceiling on `lifecycle IN ('starting','running')` jobs. */
   maxRunning?: number
+  /** Where `maxRunning` came from, so a refusal can say what to change. */
+  maxRunningSource?: 'default' | 'ceiling'
+  /** The project ceiling file, named in the refusal when the limit is the default. */
+  ceilingPath?: string | null
 }
 
 export interface AcquiredLocks {
@@ -170,6 +177,8 @@ export function acquireJobLocks(store: Store, req: JobLockRequest): AcquiredLock
         acquired_at: null,
         running_job_ids: runningJobIds,
         limit: maxRunning,
+        limit_source: req.maxRunningSource ?? 'default',
+        ceiling_path: req.ceilingPath ?? null,
       }
       throw new LockConflictError(detail)
     }

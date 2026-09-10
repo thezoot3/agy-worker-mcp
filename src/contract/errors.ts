@@ -6,6 +6,7 @@
  * string to add, which enum values exist.
  */
 
+import { MAX_RUNNING_JOBS_CAP } from './types.js'
 import type {
   LockRequestScope,
   OnDenial,
@@ -85,6 +86,10 @@ export interface LockConflictDetail {
   /** Every job counted against the ceiling, for `reason: 'limit'`. */
   running_job_ids: string[]
   limit: number | null
+  /** Whether `limit` is the server default or what the project ceiling asked for. */
+  limit_source?: 'default' | 'ceiling'
+  /** The project ceiling file to raise `max_running_jobs` in. */
+  ceiling_path?: string | null
 }
 
 /**
@@ -103,7 +108,11 @@ export class LockConflictError extends AgyWorkerError<LockConflictDetail> {
           : `${detail.scope} lock on "${detail.key}" is held by job ${holder}`),
       detail,
       detail.reason === 'limit'
-        ? 'Wait for a running job to finish (agy_wait on one of running_job_ids), or cancel one with agy_cancel.'
+        ? `Wait for a running job to finish (agy_wait on one of running_job_ids), or cancel one with agy_cancel.${
+            detail.limit_source === 'ceiling'
+              ? ` This project's ceiling set max_running_jobs to ${detail.limit}; raising it is a human decision in ${detail.ceiling_path ?? 'the ceiling file'}.`
+              : ` The limit is the server default; a human can raise it up to ${MAX_RUNNING_JOBS_CAP} with "max_running_jobs" in the project ceiling${detail.ceiling_path ? ` (${detail.ceiling_path})` : ''}.`
+          }`
         : detail.scope === 'cwd_write'
           ? `One writing job per cwd at a time; holder is job ${holder}. For parallel work start each job in its own git worktree inside the project root (cwd), or agy_wait on the holder.`
           : `Call agy_wait({ job_id: "${holder}" }) to take over the holder, agy_cancel to stop it, or start this job in a different cwd.`,

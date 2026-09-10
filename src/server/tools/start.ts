@@ -22,7 +22,7 @@ import type { EffectiveConfig, JobRequest } from '../../contract/types.js'
 import { describePolicy } from '../../broker/blockers.js'
 import { cleanupOldJobs, reconcile } from '../../broker/reconcile.js'
 import { ensureGateHook } from '../../gate/hooks-file.js'
-import { ceilingAbsenceHint, loadCeiling } from '../../policy/ceiling.js'
+import { ceilingAbsenceHint, ceilingPath, loadCeiling } from '../../policy/ceiling.js'
 import { validateWriteRoots } from '../../policy/containment.js'
 import { getProfile, resolvePolicy } from '../../policy/profiles.js'
 import { evaluateCommandPolicy, firstMatchForDenial, parseRulesLenient } from '../../policy/rules.js'
@@ -564,7 +564,12 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       cwd,
       writeMode: profileDef.write,
       sessionId,
-      maxRunning: ctx.limits.max_running_jobs,
+      // The ceiling wins over the server default when it names a number; it was
+      // validated against MAX_RUNNING_JOBS_CAP at load, so nothing here has to
+      // clamp it again.
+      maxRunning: ceiling.max_running_jobs ?? ctx.limits.max_running_jobs,
+      maxRunningSource: ceiling.max_running_jobs !== null ? 'ceiling' : 'default',
+      ceilingPath: ceiling.path ?? ceilingPath(ctx.paths),
     })
 
     if (!sessionExists) {

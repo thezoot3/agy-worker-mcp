@@ -109,6 +109,11 @@ export async function handleCapabilities(
     // as it fails `agy_start` — a caller should never see a capabilities
     // reply that quietly hid a broken ceiling file.
     const ceiling = loadCeiling(ctx.paths)
+    // The ceiling is read fresh on every `agy_start`, so the number reported
+    // here has to come from the same place rather than from the context's
+    // static defaults — otherwise capabilities would keep announcing 3 while
+    // jobs were actually running against the ceiling's number.
+    const effectiveMaxRunning = ceiling.max_running_jobs ?? ctx.limits.max_running_jobs
 
     const warnings: string[] = []
     const root = ctx.paths.root
@@ -152,7 +157,8 @@ export async function handleCapabilities(
       modes: [...MEASURED_MODES],
       session_modes: ['oneshot', 'session'],
       on_denial: ['abort', 'continue', 'guide'],
-      limits: ctx.limits,
+      limits: { ...ctx.limits, max_running_jobs: effectiveMaxRunning },
+      limits_source: { max_running_jobs: ceiling.max_running_jobs !== null ? 'ceiling' : 'default' },
       agy_bin: agyBin,
       agy_bin_present: agyBin !== null && checkAgyBinPresent(agyBin),
       ...(agyBin === null ? { agy_bin_searched: agySearchLocations() } : {}),

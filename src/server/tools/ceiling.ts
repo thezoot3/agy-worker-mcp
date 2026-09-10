@@ -123,6 +123,7 @@ export async function handleCeiling(ctx: ToolContext, input: CeilingInput): Prom
           lifted: [],
           read_roots: [],
           command_policy: 'allowlist' as const,
+          max_running_jobs: null,
           warnings: [loadError!.message],
         }
 
@@ -153,6 +154,7 @@ export async function handleCeiling(ctx: ToolContext, input: CeilingInput): Prom
           read_roots: [],
           write_roots: [],
           command_policy: 'allowlist',
+          max_running_jobs: null,
           warnings: [loadError.message],
           error: loadError.message,
         }

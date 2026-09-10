@@ -16,6 +16,24 @@
 export const SCHEMA_VERSION = 1
 
 /**
+ * Hardest per-project concurrency the server will accept, whatever the project
+ * ceiling asks for.
+ *
+ * Measured 2026-09-10: sixteen concurrent jobs on this machine still made
+ * progress, so the wall is above that. Twelve sits deliberately below the
+ * measured wall — the number that matters is not how many agy processes the
+ * machine can hold but how many the *rest* of the system stays honest under:
+ * every running job holds an open database handle, a detached runner, and a
+ * gate the watchdog has to hear from. A ceiling asking for more than this is
+ * more likely a typo than a plan.
+ *
+ * Lives here rather than beside `DEFAULT_MAX_RUNNING` in `store/locks.ts`
+ * because `contract/errors.ts` names it in a remedy, and locks already imports
+ * errors.
+ */
+export const MAX_RUNNING_JOBS_CAP = 12
+
+/**
  * Shape version of `jobs/<id>/broker-result.json`, independent of the SQLite
  * `SCHEMA_VERSION` (that file is not a table).
  *
@@ -1160,6 +1178,8 @@ export interface CeilingSummary {
   /** Extra directories jobs may write to (containment and, under seatbelt, the kernel). */
   write_roots: string[]
   command_policy: 'allowlist' | 'denylist'
+  /** Per-project concurrency the ceiling sets, or null for the server default. */
+  max_running_jobs: number | null
   /** Non-fatal notes about the file (e.g. a v1 file whose keys should be renamed). */
   warnings: string[]
   /** Present when the ceiling file exists on disk but failed to load (e.g. rejected version 1). */
@@ -1281,6 +1301,14 @@ export interface Capabilities {
     default_verify_timeout_ms: number
     max_response_bytes: number
     max_log_tail_lines: number
+  }
+  /**
+   * Which of the limits above the project ceiling moved. Reported separately
+   * from `limits` so a caller reading the effective number can still tell
+   * whether raising it is a server change or a one-line ceiling edit.
+   */
+  limits_source: {
+    max_running_jobs: 'default' | 'ceiling'
   }
   /** The resolved agy executable, or null when none was found. */
   agy_bin: string | null

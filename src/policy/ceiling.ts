@@ -5,7 +5,7 @@ import { z } from 'zod'
 
 import { canonicalize } from '../contract/paths.js'
 import { ValidationError } from '../contract/errors.js'
-import type { CeilingSummary, SandboxMode } from '../contract/types.js'
+import { MAX_RUNNING_JOBS_CAP, type CeilingSummary, type SandboxMode } from '../contract/types.js'
 import { HARD_DENY } from './hard-deny.js'
 import { matchesPathGlob, parseRule } from './rules.js'
 
@@ -60,6 +60,11 @@ export interface Ceiling {
   write_roots: string[]
   /** Command evaluation mode: "allowlist" (default) or "denylist" (0.2.2 PR3). */
   command_policy: 'allowlist' | 'denylist'
+  /**
+   * Per-project concurrency this human raised (or lowered) the server default
+   * to, capped at `MAX_RUNNING_JOBS_CAP`. Null = the server default applies.
+   */
+  max_running_jobs: number | null
   /** Schema version the file was written in (version 2); null when no file. */
   version: 2 | null
   /** Non-fatal notes for `agy_capabilities`. */
@@ -76,6 +81,7 @@ export const EMPTY_CEILING: Ceiling = Object.freeze({
   read_roots: [],
   write_roots: [],
   command_policy: 'allowlist',
+  max_running_jobs: null,
   version: null,
   warnings: [],
 })
@@ -102,6 +108,7 @@ const ceilingSchemaV2 = z.object({
   read_roots: z.array(z.string()).optional(),
   write_roots: z.array(z.string()).optional(),
   command_policy: z.enum(['allowlist', 'denylist']).optional(),
+  max_running_jobs: z.number().int().positive().optional(),
 }).strict()
 
 const ceilingSchema = ceilingSchemaV2
@@ -249,7 +256,7 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
   if (!parsed.success) {
     return fail(
       path,
-      `policy.json must be { version: 2, allow?, deny?, exceptions?, sandbox?, read_roots?, write_roots?, command_policy? } (${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')})`,
+      `policy.json must be { version: 2, allow?, deny?, exceptions?, sandbox?, read_roots?, write_roots?, command_policy?, max_running_jobs? } (${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')})`,
       json,
     )
   }
@@ -262,7 +269,18 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
   const writeRoots = d.write_roots ?? []
   const sandbox = d.sandbox ?? 'none'
   const commandPolicy = d.command_policy ?? 'allowlist'
+  const maxRunningJobs = d.max_running_jobs ?? null
   const warnings: string[] = []
+  // Fail closed rather than clamp: a number above the cap is a human asking for
+  // something this server will not do, and silently running twelve jobs when
+  // the file says forty is the kind of quiet disagreement that only surfaces as
+  // a lock conflict nobody can explain.
+  if (maxRunningJobs !== null && maxRunningJobs > MAX_RUNNING_JOBS_CAP) {
+    return fail(
+      path,
+      `max_running_jobs is ${maxRunningJobs}; this server accepts at most ${MAX_RUNNING_JOBS_CAP}`,
+    )
+  }
   for (const root of writeRoots) {
     if (root.includes('*')) {
       return fail(path, `write_roots entry is a glob (${root}); write roots are plain directories`)
@@ -295,6 +313,7 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
     read_roots: readRoots.map(resolveDirPattern),
     write_roots: Array.from(new Set(writeRoots.map(resolveDirPattern))),
     command_policy: commandPolicy,
+    max_running_jobs: maxRunningJobs,
     version: d.version,
     warnings,
   }
@@ -353,6 +372,7 @@ export function describeCeiling(ceiling: Ceiling, path: string, present: boolean
     read_roots: ceiling.read_roots,
     write_roots: ceiling.write_roots,
     command_policy: ceiling.command_policy,
+    max_running_jobs: ceiling.max_running_jobs,
     warnings: present ? ceiling.warnings : [...ceiling.warnings, ceilingAbsenceHint(path)],
   }
 }

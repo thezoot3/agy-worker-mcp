@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { canonicalize, projectPaths } from '../../src/contract/paths.js'
 import type { Capabilities } from '../../src/contract/types.js'
 import { ceilingPath } from '../../src/policy/ceiling.js'
+import { DEFAULT_MAX_RUNNING } from '../../src/store/locks.js'
 import { applyEnv, makeProject, replyJson, type TestProject } from './helpers.js'
 
 let project: TestProject
@@ -49,6 +50,27 @@ describe('agy_capabilities.ceiling', () => {
     const ro = caps.profiles.find((p) => p.name === 'research_readonly')!
     expect(gw.bypass_sandbox).toBe(true)
     expect(ro.bypass_sandbox).toBe(false)
+  })
+
+  /**
+   * `limits.max_running_jobs` is the effective number a start would enforce, so
+   * it has to follow the ceiling rather than the context's static defaults;
+   * `limits_source` is what tells a caller whether raising it is a ceiling edit
+   * or a server change.
+   */
+  it('limits.max_running_jobs follows the ceiling, and limits_source says where it came from', async () => {
+    const before = await capabilities()
+    expect(before.limits.max_running_jobs).toBe(DEFAULT_MAX_RUNNING)
+    expect(before.limits_source.max_running_jobs).toBe('default')
+
+    const paths = projectPaths(canonicalize(project.root))
+    mkdirSync(paths.dir, { recursive: true })
+    writeFileSync(ceilingPath(paths), JSON.stringify({ version: 2, max_running_jobs: 6 }))
+
+    const after = await capabilities()
+    expect(after.limits.max_running_jobs).toBe(6)
+    expect(after.limits_source.max_running_jobs).toBe('ceiling')
+    expect(after.ceiling.max_running_jobs).toBe(6)
   })
 
   it('present is true and the lists reflect policy.json verbatim, {workspace} left unsubstituted', async () => {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { canonicalize } from '../../../src/contract/paths.js'
+import { MAX_RUNNING_JOBS_CAP } from '../../../src/contract/types.js'
 import { ValidationError } from '../../../src/contract/errors.js'
 import {
   additionalDirCovered,
@@ -117,6 +118,33 @@ describe('loadCeiling — valid file', () => {
     expect(ceiling.allow).toEqual(['command(./gradlew)', 'write_file({workspace}/build/**)'])
     expect(ceiling.deny).toEqual(['command(curl)'])
     expect(ceiling.sandbox).toBe('agy')
+  })
+
+  /**
+   * The concurrency number is the one ceiling key that changes how many jobs
+   * run at once rather than what one job may do, so it has its own cap: a
+   * number above it fails the file closed instead of being quietly clamped,
+   * because a ceiling that says forty while the server runs twelve is a
+   * disagreement nobody would ever see except as an unexplained lock conflict.
+   */
+  it('reads max_running_jobs, and rejects one above the server cap', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, max_running_jobs: 8 }))
+    expect(loadCeiling({ dir: stateDir }).max_running_jobs).toBe(8)
+
+    writeCeilingFile(JSON.stringify({ version: 2, max_running_jobs: MAX_RUNNING_JOBS_CAP + 1 }))
+    expect(() => loadCeiling({ dir: stateDir })).toThrow(ValidationError)
+    try {
+      loadCeiling({ dir: stateDir })
+    } catch (e) {
+      expect((e as ValidationError).detail.expected).toContain(String(MAX_RUNNING_JOBS_CAP))
+    }
+  })
+
+  it('rejects a non-positive or fractional max_running_jobs', () => {
+    for (const bad of [0, -1, 2.5]) {
+      writeCeilingFile(JSON.stringify({ version: 2, max_running_jobs: bad }))
+      expect(() => loadCeiling({ dir: stateDir })).toThrow(ValidationError)
+    }
   })
 
   it('expands ~ and canonicalizes read_roots entries', () => {

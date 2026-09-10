@@ -7,6 +7,7 @@ import { getProcStartTime } from '../../../src/runner/reap.js'
 import { createSession } from '../../../src/store/sessions.js'
 import {
   DEFAULT_MAX_RUNNING,
+  MAX_RUNNING_JOBS_CAP,
   acquireJobLocks,
   reapStaleLocks,
 } from '../../../src/store/locks.js'
@@ -218,5 +219,59 @@ describe('running-job ceiling', () => {
     }
     expect(thrown).toBeInstanceOf(LockConflictError)
     expect((thrown as LockConflictError).detail.reason).toBe('limit')
+  })
+
+  /**
+   * The remedy is the whole point of the error: a caller that only learns "too
+   * many jobs" waits forever, while one told which file holds the number can
+   * ask a human to change it.
+   */
+  it('names the ceiling key when the limit is the server default', () => {
+    const { store, workspace } = handle
+    const holders = Array.from({ length: DEFAULT_MAX_RUNNING }, (_, i) =>
+      newTestJob(store, { cwd: `${workspace}/d${i}`, writeMode: false }),
+    )
+    for (const h of holders) markRunning(store, h.job_id, process.pid, getProcStartTime(process.pid))
+
+    const oneMore = newTestJob(store, { cwd: `${workspace}/d-extra`, writeMode: false })
+    let thrown: LockConflictError | null = null
+    try {
+      acquireJobLocks(store, {
+        jobId: oneMore.job_id,
+        cwd: `${workspace}/d-extra`,
+        writeMode: false,
+        ceilingPath: '/tmp/fake/policy.json',
+      })
+    } catch (e) {
+      thrown = e as LockConflictError
+    }
+    expect(thrown?.detail.limit_source).toBe('default')
+    expect(thrown?.remedy).toContain('max_running_jobs')
+    expect(thrown?.remedy).toContain(String(MAX_RUNNING_JOBS_CAP))
+    expect(thrown?.remedy).toContain('/tmp/fake/policy.json')
+  })
+
+  it('a ceiling-set limit is enforced instead of the default, and the remedy says so', () => {
+    const { store, workspace } = handle
+    const holder = newTestJob(store, { cwd: `${workspace}/c0`, writeMode: false })
+    markRunning(store, holder.job_id, process.pid, getProcStartTime(process.pid))
+
+    const oneMore = newTestJob(store, { cwd: `${workspace}/c1`, writeMode: false })
+    let thrown: LockConflictError | null = null
+    try {
+      acquireJobLocks(store, {
+        jobId: oneMore.job_id,
+        cwd: `${workspace}/c1`,
+        writeMode: false,
+        maxRunning: 1,
+        maxRunningSource: 'ceiling',
+        ceilingPath: '/tmp/fake/policy.json',
+      })
+    } catch (e) {
+      thrown = e as LockConflictError
+    }
+    expect(thrown?.detail.limit).toBe(1)
+    expect(thrown?.detail.limit_source).toBe('ceiling')
+    expect(thrown?.remedy).toContain('/tmp/fake/policy.json')
   })
 })
