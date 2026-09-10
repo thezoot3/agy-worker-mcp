@@ -42,3 +42,51 @@ jobs:
         run: |
           npm pack --silent >/dev/null
           tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/dist/(server|runner|gate)\.js$'
+
+  install-smoke:
+    name: install the tarball and start the launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.x'
+          cache: npm
+
+      - run: npm ci
+
+      # The failure this catches is the one nobody sees in a terminal: a
+      # GUI-launched client runs the server with a PATH that has no
+      # version-manager node in it, the launcher is what survives that, and
+      # nothing in the unit suite executes the launcher at all.
+      - name: install into a throwaway prefix and start the server through the launcher
+        run: |
+          set -eu
+          tarball="$(npm pack --silent)"
+          prefix="$(mktemp -d)"
+          fakehome="$(mktemp -d)"
+          state="$(mktemp -d)"
+
+          npm install -g --prefix "$prefix" "./${tarball}"
+
+          HOME="$fakehome" AGY_WORKER_HOME="$state" \
+            "$prefix/bin/agy-worker-setup" --client claude
+
+          launcher="$state/bin/agy-worker-mcp"
+          test -x "$launcher" || { echo "launcher not installed at $launcher" >&2; exit 1; }
+
+          # No inherited PATH at all: only the launcher's own recorded paths and
+          # its version-manager fallbacks can make this work.
+          response="$(printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            | env -i HOME="$fakehome" AGY_WORKER_HOME="$state" PATH=/usr/bin:/bin \
+                "$launcher" 2>/dev/null | head -n 1)"
+
+          echo "$response"
+          echo "$response" | grep -q '"serverInfo"' || {
+            echo "the launcher did not answer an MCP initialize" >&2
+            exit 1
+          }
+
+          HOME="$fakehome" AGY_WORKER_HOME="$state" "$prefix/bin/agy-worker-setup" --doctor
