@@ -116,6 +116,7 @@ describe('profile golden snapshots', () => {
         "command(git clean)",
         "command(git filter-branch)",
         "command(git branch -D)",
+        "command(git worktree)",
         "command(git stash drop)",
         "command(git remote add)",
         "command(git remote set-url)",

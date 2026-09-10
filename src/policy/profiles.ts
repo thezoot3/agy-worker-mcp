@@ -156,6 +156,7 @@ export const PROFILES: Readonly<Record<Profile, ProfileDef>> = Object.freeze({
       'command(git clean)',
       'command(git filter-branch)',
       'command(git branch -D)',
+      'command(git worktree)',
       'command(git stash drop)',
       'command(git remote add)',
       'command(git remote set-url)',
@@ -203,6 +204,12 @@ export interface ResolvePolicyInput {
    * fallback, one layer further out.
    */
   ceiling?: Ceiling
+  /**
+   * Canonical directories outside the workspace that the server itself linked
+   * into it (`isolation: 'worktree'`). Not caller-supplied: computed from the
+   * ceiling's `link_paths` and the links actually created.
+   */
+  linkedRoots?: string[]
 }
 
 /**
@@ -235,7 +242,12 @@ export function resolvePolicy(input: ResolvePolicyInput): EffectivePolicy {
   const workspace = canonicalize(input.workspace)
   const substitute = (rule: string) => rule.replaceAll('{workspace}', workspace)
   const ceiling = input.ceiling ?? EMPTY_CEILING
-  const ceilingAllow = [...def.allow, ...ceiling.allow].map(substitute)
+  const linkedRoots = (input.linkedRoots ?? []).map(canonicalize)
+  const linkedRules = linkedRoots.flatMap((r) => [
+    `read_file(${r})`,
+    `read_file(${r}/**)`,
+  ])
+  const ceilingAllow = [...def.allow, ...ceiling.allow].map(substitute).concat(linkedRules)
   // HARD_DENY carries `write_file({workspace}/.agents/**)` (I6), so it needs
   // the same substitution the allow ceiling already got — unsubstituted, the
   // literal string `{workspace}` would never match any real path.
@@ -248,7 +260,7 @@ export function resolvePolicy(input: ResolvePolicyInput): EffectivePolicy {
     rejectedAllow = []
   } else {
     const { allowed, rejected } = intersectAllow(input.requested.allow, ceilingAllow)
-    allow = allowed
+    allow = Array.from(new Set([...allowed, ...linkedRules]))
     rejectedAllow = rejected
   }
 
@@ -346,6 +358,11 @@ export function resolvePolicy(input: ResolvePolicyInput): EffectivePolicy {
       }
     }
     additionalDirsSource = 'request'
+  }
+  for (const root of linkedRoots) {
+    if (!additionalDirs.includes(root)) {
+      additionalDirs.push(root)
+    }
   }
   const roots = buildRoots(workspace, additionalDirs)
   // Ceiling `write_roots` widen containment (and the seatbelt) beyond the

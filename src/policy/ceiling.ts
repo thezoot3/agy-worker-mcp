@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 
 import { canonicalize } from '../contract/paths.js'
@@ -58,6 +58,11 @@ export interface Ceiling {
    * `write_roots` for containment and the seatbelt profile alike.
    */
   write_roots: string[]
+  /**
+   * Project-root-relative paths linked into the worktree (`isolation: 'worktree'`).
+   * Read-only symlinks created by the server from the base repository.
+   */
+  link_paths: string[]
   /** Command evaluation mode: "allowlist" (default) or "denylist" (0.2.2 PR3). */
   command_policy: 'allowlist' | 'denylist'
   /**
@@ -80,6 +85,7 @@ export const EMPTY_CEILING: Ceiling = Object.freeze({
   sandbox: 'none',
   read_roots: [],
   write_roots: [],
+  link_paths: [],
   command_policy: 'allowlist',
   max_running_jobs: null,
   version: null,
@@ -107,6 +113,7 @@ const ceilingSchemaV2 = z.object({
   sandbox: z.enum(['none', 'seatbelt', 'agy']).optional(),
   read_roots: z.array(z.string()).optional(),
   write_roots: z.array(z.string()).optional(),
+  link_paths: z.array(z.string()).optional(),
   command_policy: z.enum(['allowlist', 'denylist']).optional(),
   max_running_jobs: z.number().int().positive().optional(),
 }).strict()
@@ -256,7 +263,7 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
   if (!parsed.success) {
     return fail(
       path,
-      `policy.json must be { version: 2, allow?, deny?, exceptions?, sandbox?, read_roots?, write_roots?, command_policy?, max_running_jobs? } (${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')})`,
+      `policy.json must be { version: 2, allow?, deny?, exceptions?, sandbox?, read_roots?, write_roots?, link_paths?, command_policy?, max_running_jobs? } (${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')})`,
       json,
     )
   }
@@ -267,6 +274,7 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
   const exceptions = d.exceptions ?? []
   const readRoots = d.read_roots ?? []
   const writeRoots = d.write_roots ?? []
+  const linkPaths = d.link_paths ?? []
   const sandbox = d.sandbox ?? 'none'
   const commandPolicy = d.command_policy ?? 'allowlist'
   const maxRunningJobs = d.max_running_jobs ?? null
@@ -284,6 +292,20 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
   for (const root of writeRoots) {
     if (root.includes('*')) {
       return fail(path, `write_roots entry is a glob (${root}); write roots are plain directories`)
+    }
+  }
+
+  for (const entry of linkPaths) {
+    if (
+      entry === '' ||
+      entry === '.' ||
+      isAbsolute(entry) ||
+      entry.split(/[/\\]/).includes('..')
+    ) {
+      return fail(
+        path,
+        `link_paths entry is invalid (${entry}); entries must be non-empty, project-root-relative, not ".", and not contain ".." segments`,
+      )
     }
   }
 
@@ -312,6 +334,7 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
     sandbox,
     read_roots: readRoots.map(resolveDirPattern),
     write_roots: Array.from(new Set(writeRoots.map(resolveDirPattern))),
+    link_paths: linkPaths,
     command_policy: commandPolicy,
     max_running_jobs: maxRunningJobs,
     version: d.version,
@@ -371,6 +394,7 @@ export function describeCeiling(ceiling: Ceiling, path: string, present: boolean
     sandbox: ceiling.sandbox,
     read_roots: ceiling.read_roots,
     write_roots: ceiling.write_roots,
+    link_paths: ceiling.link_paths,
     command_policy: ceiling.command_policy,
     max_running_jobs: ceiling.max_running_jobs,
     warnings: present ? ceiling.warnings : [...ceiling.warnings, ceilingAbsenceHint(path)],

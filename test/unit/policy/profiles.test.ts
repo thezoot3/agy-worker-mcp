@@ -302,3 +302,24 @@ describe('resolvePolicy — max_denials', () => {
     expect(policy.max_denials).toBe(3)
   })
 })
+
+describe('resolvePolicy — linkedRoots (worktree isolation)', () => {
+  it('puts linkedRoots in read_roots and not in write_roots, and includes read_file in allow list', () => {
+    const policy = resolvePolicy({
+      profile: 'general_worker',
+      workspace,
+      linkedRoots: ['/somewhere/node_modules'],
+    })
+    expect(policy.read_roots).toContain('/somewhere/node_modules')
+    expect(policy.write_roots).not.toContain('/somewhere/node_modules')
+    expect(policy.allow).toContain('read_file(/somewhere/node_modules/**)')
+  })
+})
+
+describe('general_worker — worktree deny rule', () => {
+  it('denies command(git worktree) for general_worker', () => {
+    const policy = resolvePolicy({ profile: 'general_worker', workspace })
+    expect(policy.deny).toContain('command(git worktree)')
+  })
+})
+

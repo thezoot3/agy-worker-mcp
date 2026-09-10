@@ -722,6 +722,10 @@ export interface JobRequest {
   verify_command?: string
   /** Default 600000ms, clamped to `limits.max_timeout_ms`. Ignored without `verify_command`. */
   verify_timeout_ms?: number
+  /** Workspace isolation mode: 'in_place' (default) or 'worktree'. */
+  isolation?: 'in_place' | 'worktree'
+  /** git ref to branch the worktree from (default 'HEAD'). isolation 'worktree' only. */
+  base_ref?: string
 }
 
 /**
@@ -796,6 +800,18 @@ export interface EffectiveConfig {
   /** Allowlisted environment passed to the child. */
   env: Record<string, string>
   created_at: number
+  /**
+   * The git worktree this job runs in, or null for `in_place`. Written so a
+   * later caller can find the branch to merge and the worktree to remove
+   * without re-deriving either from the job id.
+   */
+  worktree: {
+    path: string
+    branch: string
+    base_ref: string
+    base_commit: string
+    linked: string[]
+  } | null
 }
 
 /** `jobs/<id>/state.json` — written atomically by the runner. */
@@ -1177,6 +1193,8 @@ export interface CeilingSummary {
   read_roots: string[]
   /** Extra directories jobs may write to (containment and, under seatbelt, the kernel). */
   write_roots: string[]
+  /** Project-root-relative paths linked into the worktree (isolation: 'worktree'). */
+  link_paths: string[]
   command_policy: 'allowlist' | 'denylist'
   /** Per-project concurrency the ceiling sets, or null for the server default. */
   max_running_jobs: number | null

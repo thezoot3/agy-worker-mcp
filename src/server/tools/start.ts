@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 
+import { createJobWorktree, removeJobWorktree, type WorktreeCreation } from '../../workspace/worktree.js'
 import { ValidationError } from '../../contract/errors.js'
 import {
   assertContained,
@@ -149,6 +150,15 @@ export const startInput = z.object({
     ),
   requested_by: z.string().optional(),
   parent_task_id: z.string().optional(),
+  isolation: z
+    .enum(['in_place', 'worktree'])
+    .optional()
+    .describe('Workspace isolation mode: "in_place" (default) or "worktree".'),
+  base_ref: z
+    .string()
+    .refine((v) => !v.startsWith('-'), 'must not look like a CLI flag')
+    .optional()
+    .describe('git ref to branch the worktree from (default "HEAD"). isolation "worktree" only.'),
   dry_run: z
     .boolean()
     .optional()
@@ -267,8 +277,38 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
     const profileName = input.profile ?? 'research_readonly'
     const profileDef = getProfile(profileName)
 
+    const isolation = input.isolation ?? 'in_place'
+
+    if (input.base_ref !== undefined && isolation !== 'worktree') {
+      throw new ValidationError({
+        field: 'base_ref',
+        value: input.base_ref,
+        expected: 'base_ref requires isolation: "worktree"',
+      })
+    }
+
+    if (isolation === 'worktree') {
+      const gitEntry = join(ctx.paths.root, '.git')
+      if (!existsSync(gitEntry)) {
+        throw new ValidationError({
+          field: 'isolation',
+          value: isolation,
+          expected: 'project root must be a git repository (.git present) for isolation "worktree"',
+        })
+      }
+    }
+
     const rawCwd = input.cwd ?? ctx.paths.root
     const cwd = assertContained(rawCwd, [ctx.paths.root], 'write')
+
+    if (isolation === 'worktree' && input.cwd !== undefined && cwd !== canonicalize(ctx.paths.root)) {
+      throw new ValidationError({
+        field: 'cwd',
+        value: input.cwd,
+        expected:
+          'omit cwd, or pass the project root: isolation "worktree" makes a worktree of the whole repository',
+      })
+    }
 
     // Fail before anything else is created: a job whose gate can never load
     // must never reach `acquireJobLocks` / `createJob` — there would be
@@ -363,6 +403,11 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
       : null
     const expectedArtifacts = input.expected_artifacts ?? []
 
+    const jobId = newJobId()
+    const now = Date.now()
+    const deadlineAt = now + timeoutMs
+    const streamInput = sessionMode === 'session'
+
     // Loaded once per call, fresh — never cached across calls, so an edit to
     // policy.json between two agy_start calls takes effect immediately.
     // Invalid (`ValidationError`) propagates straight to `errorReply` below,
@@ -370,275 +415,357 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
     // ceiling (see docs/permissions.md).
     const ceiling = loadCeiling(ctx.paths)
 
-    const policy = resolvePolicy({
-      profile: profileName,
-      workspace: cwd,
-      requested: input.permissions,
-      onDenial,
-      maxDenials: input.max_denials ?? null,
-      ceiling,
-    })
+    let effectiveWorkspace = cwd
+    let worktreeCreation: WorktreeCreation | null = null
+    let linkedRoots: string[] | undefined = undefined
+    let baseCommit: string | null = null
+    const baseRef = input.base_ref ?? 'HEAD'
 
-    validateWriteRoots(policy.write_roots, gatePath)
-
-    // PR6: `verify_command` is checked
-    // against the same resolved deny list a `run_command` call inside this job
-    // would be checked against — `policy.deny` already unions `HARD_DENY`, the
-    // profile's own deny list, the ceiling's `deny`, and the request's
-    // own `deny`, `{workspace}`-substituted by `resolvePolicy` above — so
-    // reusing it here is both the simplest check and the correct one: nothing
-    // verify_command runs unsandboxed after the job finishes should be able to
-    // do what an ordinary `run_command` call could not have done inside it.
-    let verify: { command: string; timeout_ms: number } | null = null
-    if (input.verify_command) {
-      const denyMatch = firstMatchForDenial(parseRulesLenient(policy.deny), {
-        verb: 'command',
-        value: input.verify_command,
-      })
-      if (denyMatch) {
-        throw new ValidationError({
-          field: 'verify_command',
-          value: input.verify_command,
-          expected: `a command not matched by a deny rule — matched ${denyMatch.raw}`,
+    if (isolation === 'worktree') {
+      if (input.dry_run) {
+        // Resolve base_commit in dry_run to validate the ref without writing to disk.
+        const revParse = spawnSync('git', ['rev-parse', baseRef], {
+          cwd: ctx.paths.root,
+          encoding: 'utf8',
         })
-      }
-      const verifyTimeoutMs = clamp(
-        input.verify_timeout_ms ?? ctx.limits.default_verify_timeout_ms,
-        1,
-        ctx.limits.max_timeout_ms,
-      )
-      verify = { command: input.verify_command, timeout_ms: verifyTimeoutMs }
-    }
-
-    const jobId = newJobId()
-    const now = Date.now()
-    const deadlineAt = now + timeoutMs
-
-    // Session mode takes its prompts from stdin, so turn 1 is seeded into the
-    // inbox below rather than passed on the command line (agy refuses both).
-    const streamInput = sessionMode === 'session'
-    // The workspace is always addDirs[0] (buildAgyArgv's own contract);
-    // policy.add_dirs is `requested.read_roots` filtered against
-    // the human ceiling's glob list.
-    const addDirs = [cwd, ...policy.add_dirs]
-    // M10 (measured on agy 1.1.27): agy loads `.agents/hooks.json` from
-    // *every* `--add-dir`, and a deny from such a hook runs before ours and
-    // short-circuits the chain — our gate never sees the call, the watchdog
-    // (I4) then kills the job as "gate not confirmed", and whether a foreign
-    // `overwrite` could clobber ours is unmeasured. Fail closed: a read root
-    // that carries its own hook file is refused here, with the path, rather
-    // than started and misreported.
-    for (const dir of policy.add_dirs) {
-      const foreign = hooksFilePath(dir)
-      if (existsSync(foreign)) {
-        throw new ValidationError({
-          field: 'read_roots',
-          value: dir,
-          expected: `a read root without its own .agents/hooks.json — agy loads hook files from every --add-dir, and ${foreign} would run ahead of this job's gate (M10). Remove it from read_roots or move the hook file`,
-        })
-      }
-    }
-    const argv = buildAgyArgv({
-      prompt: streamInput ? '' : input.prompt,
-      addDirs,
-      model: input.model ?? null,
-      effort: input.effort ?? null,
-      mode: input.mode ?? null,
-      conversationId,
-      inputFormat: streamInput ? 'stream-json' : null,
-      outputFormat: 'stream-json',
-      printTimeoutMs: timeoutMs,
-      jsonSchemaPath,
-    })
-
-    const agyBin = resolveAgyBin()
-    // Pin the gate's own openStore() to the same project root and state home
-    // this server resolved, so a nested repo as `cwd` or an env-override root
-    // can never make the gate compute a different, empty database (finding 10).
-    const env = buildChildEnv(process.env, { projectRoot: ctx.paths.root, stateHome: stateHome() })
-
-    const effectiveConfig: EffectiveConfig = {
-      job_id: jobId,
-      session_id: sessionId,
-      conversation_id: conversationId,
-      cwd,
-      profile: profileName,
-      model: input.model ?? null,
-      effort: input.effort ?? null,
-      mode: input.mode ?? null,
-      session_mode: sessionMode,
-      on_denial: onDenial,
-      write_mode: profileDef.write,
-      timeout_ms: timeoutMs,
-      deadline_at: deadlineAt,
-      idle_timeout_ms: idleTimeoutMs,
-      expected_artifacts: expectedArtifacts,
-      json_schema_path: jsonSchemaPath,
-      policy,
-      add_dirs: addDirs,
-      verify,
-      argv,
-      agy_bin: agyBin,
-      env,
-      created_at: now,
-    }
-
-    // Same three fields on both replies, from one builder: what the policy
-    // ended up as, what the request lost on the way there, and that rendered
-    // for a caller who reads prose. A rejected `permissions.allow` collapses
-    // the effective allow list to empty — profile defaults included — which is
-    // the trap this reports (see policyCeilingBlockers).
-    const described = describePolicy(policy)
-    const warnings = [...described.warnings]
-    if (!policy.ceiling_present) warnings.push(ceilingAbsenceHint(policy.ceiling_path))
-
-    const hasVerifiable =
-      (input.expected_artifacts && input.expected_artifacts.length > 0) ||
-      Boolean(input.verify_command) ||
-      Boolean(input.json_schema)
-    if (profileName === 'general_worker' && !hasVerifiable) {
-      warnings.push(
-        'nothing verifiable requested: the best outcome this job can reach is success_unverified. Pass verify_command (the build or test command), expected_artifacts, or json_schema to make verified_success possible.',
-      )
-    }
-
-    let preflight: {
-      commands: Array<{
-        command: string
-        decision: 'allow' | 'deny'
-        stage: string
-        required_rule: string | null
-      }>
-    } | undefined
-
-    if (input.dry_run && input.expected_commands) {
-      const allowRules = parseRulesLenient(policy.allow)
-      const denyRules = parseRulesLenient(policy.deny)
-      const commandResults: Array<{
-        command: string
-        decision: 'allow' | 'deny'
-        stage: string
-        required_rule: string | null
-      }> = []
-      let deniedCount = 0
-
-      for (const cmd of input.expected_commands) {
-        const evalRes = evaluateCommandPolicy(cmd, allowRules, denyRules, 0, policy.workspace)
-        const decision: 'allow' | 'deny' = evalRes.allowed ? 'allow' : 'deny'
-        if (!evalRes.allowed) {
-          deniedCount++
+        if (revParse.status !== 0) {
+          const err = (revParse.stderr || revParse.stdout || '').trim()
+          throw new ValidationError({
+            field: 'base_ref',
+            value: input.base_ref,
+            expected: err || `valid git ref (${baseRef})`,
+          })
         }
-        commandResults.push({
-          command: cmd,
-          decision,
-          stage: evalRes.stage,
-          required_rule: evalRes.requiredRule,
+        baseCommit = revParse.stdout.trim()
+        const worktreePath = join(ctx.paths.root, '.worktrees', `agy-${jobId}`)
+        effectiveWorkspace = worktreePath
+        const wouldLinkRoots: string[] = []
+        for (const entry of ceiling.link_paths) {
+          const src = join(ctx.paths.root, entry)
+          if (existsSync(src)) {
+            wouldLinkRoots.push(canonicalize(src))
+          }
+        }
+        linkedRoots = wouldLinkRoots
+      } else {
+        worktreeCreation = createJobWorktree({
+          root: ctx.paths.root,
+          jobId,
+          baseRef,
+          linkPaths: ceiling.link_paths,
         })
-      }
-
-      preflight = { commands: commandResults }
-      if (deniedCount > 0) {
-        warnings.push(
-          `${deniedCount} of ${input.expected_commands.length} expected_commands would be denied; see preflight.commands`,
-        )
+        effectiveWorkspace = worktreeCreation.path
+        linkedRoots = worktreeCreation.linkedRoots
+        baseCommit = worktreeCreation.base_commit
       }
     }
 
-    if (input.dry_run) {
-      return reply({
-        dry_run: true,
+    try {
+      const policy = resolvePolicy({
+        profile: profileName,
+        workspace: effectiveWorkspace,
+        requested: input.permissions,
+        onDenial,
+        maxDenials: input.max_denials ?? null,
+        ceiling,
+        linkedRoots,
+      })
+
+      validateWriteRoots(policy.write_roots, gatePath)
+
+      // PR6: `verify_command` is checked
+      // against the same resolved deny list a `run_command` call inside this job
+      // would be checked against — `policy.deny` already unions `HARD_DENY`, the
+      // profile's own deny list, the ceiling's `deny`, and the request's
+      // own `deny`, `{workspace}`-substituted by `resolvePolicy` above — so
+      // reusing it here is both the simplest check and the correct one: nothing
+      // verify_command runs unsandboxed after the job finishes should be able to
+      // do what an ordinary `run_command` call could not have done inside it.
+      let verify: { command: string; timeout_ms: number } | null = null
+      if (input.verify_command) {
+        const denyMatch = firstMatchForDenial(parseRulesLenient(policy.deny), {
+          verb: 'command',
+          value: input.verify_command,
+        })
+        if (denyMatch) {
+          throw new ValidationError({
+            field: 'verify_command',
+            value: input.verify_command,
+            expected: `a command not matched by a deny rule — matched ${denyMatch.raw}`,
+          })
+        }
+        const verifyTimeoutMs = clamp(
+          input.verify_timeout_ms ?? ctx.limits.default_verify_timeout_ms,
+          1,
+          ctx.limits.max_timeout_ms,
+        )
+        verify = { command: input.verify_command, timeout_ms: verifyTimeoutMs }
+      }
+
+      // The workspace is always addDirs[0] (buildAgyArgv's own contract);
+      // policy.add_dirs is `requested.read_roots` filtered against
+      // the human ceiling's glob list, plus any linkedRoots.
+      const addDirs = [effectiveWorkspace, ...policy.add_dirs]
+      // M10 (measured on agy 1.1.27): agy loads `.agents/hooks.json` from
+      // *every* `--add-dir`, and a deny from such a hook runs before ours and
+      // short-circuits the chain — our gate never sees the call, the watchdog
+      // (I4) then kills the job as "gate not confirmed", and whether a foreign
+      // `overwrite` could clobber ours is unmeasured. Fail closed: a read root
+      // that carries its own hook file is refused here, with the path, rather
+      // than started and misreported.
+      for (const dir of policy.add_dirs) {
+        const foreign = hooksFilePath(dir)
+        if (existsSync(foreign)) {
+          throw new ValidationError({
+            field: 'read_roots',
+            value: dir,
+            expected: `a read root without its own .agents/hooks.json — agy loads hook files from every --add-dir, and ${foreign} would run ahead of this job's gate (M10). Remove it from read_roots or move the hook file`,
+          })
+        }
+      }
+      const argv = buildAgyArgv({
+        prompt: streamInput ? '' : input.prompt,
+        addDirs,
+        model: input.model ?? null,
+        effort: input.effort ?? null,
+        mode: input.mode ?? null,
+        conversationId,
+        inputFormat: streamInput ? 'stream-json' : null,
+        outputFormat: 'stream-json',
+        printTimeoutMs: timeoutMs,
+        jsonSchemaPath,
+      })
+
+      const agyBin = resolveAgyBin()
+      // Pin the gate's own openStore() to the same project root and state home
+      // this server resolved, so a nested repo as `cwd` or an env-override root
+      // can never make the gate compute a different, empty database (finding 10).
+      const env = buildChildEnv(process.env, { projectRoot: ctx.paths.root, stateHome: stateHome() })
+
+      const worktreeConfig =
+        isolation === 'worktree'
+          ? {
+              path: effectiveWorkspace,
+              branch: `agy/${jobId}`,
+              base_ref: baseRef,
+              base_commit: baseCommit!,
+              linked: worktreeCreation
+                ? worktreeCreation.linked
+                : ceiling.link_paths.filter((e) => existsSync(join(ctx.paths.root, e))),
+            }
+          : null
+
+      const effectiveConfig: EffectiveConfig = {
         job_id: jobId,
         session_id: sessionId,
+        conversation_id: conversationId,
+        cwd: effectiveWorkspace,
+        profile: profileName,
+        model: input.model ?? null,
+        effort: input.effort ?? null,
+        mode: input.mode ?? null,
+        session_mode: sessionMode,
+        on_denial: onDenial,
+        write_mode: profileDef.write,
+        timeout_ms: timeoutMs,
+        deadline_at: deadlineAt,
+        idle_timeout_ms: idleTimeoutMs,
+        expected_artifacts: expectedArtifacts,
+        json_schema_path: jsonSchemaPath,
+        policy,
+        add_dirs: addDirs,
+        verify,
+        argv,
+        agy_bin: agyBin,
+        env,
+        created_at: now,
+        worktree: worktreeConfig,
+      }
+
+      // Same three fields on both replies, from one builder: what the policy
+      // ended up as, what the request lost on the way there, and that rendered
+      // for a caller who reads prose. A rejected `permissions.allow` collapses
+      // the effective allow list to empty — profile defaults included — which is
+      // the trap this reports (see policyCeilingBlockers).
+      const described = describePolicy(policy)
+      const warnings = [...described.warnings]
+      if (worktreeCreation && worktreeCreation.warnings.length > 0) {
+        warnings.push(...worktreeCreation.warnings)
+      }
+      if (!policy.ceiling_present) warnings.push(ceilingAbsenceHint(policy.ceiling_path))
+
+      const hasVerifiable =
+        (input.expected_artifacts && input.expected_artifacts.length > 0) ||
+        Boolean(input.verify_command) ||
+        Boolean(input.json_schema)
+      if (profileName === 'general_worker' && !hasVerifiable) {
+        warnings.push(
+          'nothing verifiable requested: the best outcome this job can reach is success_unverified. Pass verify_command (the build or test command), expected_artifacts, or json_schema to make verified_success possible.',
+        )
+      }
+
+      let preflight: {
+        commands: Array<{
+          command: string
+          decision: 'allow' | 'deny'
+          stage: string
+          required_rule: string | null
+        }>
+      } | undefined
+
+      if (input.dry_run && input.expected_commands) {
+        const allowRules = parseRulesLenient(policy.allow)
+        const denyRules = parseRulesLenient(policy.deny)
+        const commandResults: Array<{
+          command: string
+          decision: 'allow' | 'deny'
+          stage: string
+          required_rule: string | null
+        }> = []
+        let deniedCount = 0
+
+        for (const cmd of input.expected_commands) {
+          const evalRes = evaluateCommandPolicy(cmd, allowRules, denyRules, 0, policy.workspace)
+          const decision: 'allow' | 'deny' = evalRes.allowed ? 'allow' : 'deny'
+          if (!evalRes.allowed) {
+            deniedCount++
+          }
+          commandResults.push({
+            command: cmd,
+            decision,
+            stage: evalRes.stage,
+            required_rule: evalRes.requiredRule,
+          })
+        }
+
+        preflight = { commands: commandResults }
+        if (deniedCount > 0) {
+          warnings.push(
+            `${deniedCount} of ${input.expected_commands.length} expected_commands would be denied; see preflight.commands`,
+          )
+        }
+      }
+
+      if (input.dry_run) {
+        return reply({
+          dry_run: true,
+          job_id: jobId,
+          session_id: sessionId,
+          policy_summary: described.policy_summary,
+          blockers: described.blockers,
+          warnings,
+          ...(preflight ? { preflight } : {}),
+          effective_config: effectiveConfig,
+          ...(isolation === 'worktree'
+            ? {
+                workspace_preview: {
+                  kind: 'worktree',
+                  path: effectiveWorkspace,
+                  branch: `agy/${jobId}`,
+                  base_ref: baseRef,
+                  link_paths: ceiling.link_paths,
+                },
+              }
+            : {}),
+        })
+      }
+
+      // Locks first: a lost race must leave nothing behind, and
+      // no DB row references this job_id yet, so there is nothing to unwind.
+      acquireJobLocks(ctx.store, {
+        jobId,
+        cwd: effectiveWorkspace,
+        writeMode: profileDef.write,
+        sessionId,
+        // The ceiling wins over the server default when it names a number; it was
+        // validated against MAX_RUNNING_JOBS_CAP at load, so nothing here has to
+        // clamp it again.
+        maxRunning: ceiling.max_running_jobs ?? ctx.limits.max_running_jobs,
+        maxRunningSource: ceiling.max_running_jobs !== null ? 'ceiling' : 'default',
+        ceilingPath: ceiling.path ?? ceilingPath(ctx.paths),
+      })
+
+      if (!sessionExists) {
+        createSession(ctx.store, {
+          sessionId,
+          cwd: effectiveWorkspace,
+          model: input.model ?? null,
+          effort: input.effort ?? null,
+          profile: profileName,
+        })
+      }
+
+      createJob(ctx.store, {
+        jobId,
+        sessionId,
+        cwd: effectiveWorkspace,
+        profile: profileName,
+        writeMode: profileDef.write,
+        sessionMode,
+        onDenial,
+        deadlineAt,
+        requestedBy: input.requested_by ?? null,
+        parentTaskId: input.parent_task_id ?? null,
+      })
+      chmodDbFiles(ctx.store.paths.db)
+
+      const paths = jobPaths(ctx.paths, jobId)
+      ensureJobDirs(paths)
+
+      const request: JobRequest = { ...input }
+      writeJsonAtomic(paths.request, request)
+      writeJsonAtomic(paths.effectiveConfig, effectiveConfig)
+      writeJsonAtomic(paths.policy, policy)
+
+      // Turn 1 of a session-mode job. The runner's inbox relay writes it to agy's
+      // stdin as soon as the process is up; `agy_send` appends later turns to the
+      // same file. Written before the spawn so the relay can never miss it.
+      if (streamInput && input.prompt !== '') {
+        appendUserTurn(paths.inbox, input.prompt)
+      }
+
+      ensureGateHook(effectiveWorkspace, gatePath)
+      ensureGitExclude(effectiveWorkspace)
+      if (isolation === 'worktree') {
+        ensureGitExclude(ctx.paths.root)
+      }
+
+      // Detached: the runner outlives this server process entirely.
+      // stdio is 'ignore' — the runner redirects agy's own stdout/stderr
+      // to job-directory files itself; nothing here needs a pipe.
+      const child = spawn(process.execPath, [binPath('runner'), jobId], {
+        cwd: ctx.paths.root,
+        detached: true,
+        stdio: 'ignore',
+        env: process.env,
+      })
+      child.unref()
+
+      return reply({
+        job_id: jobId,
+        session_id: sessionId,
+        lifecycle: 'queued',
+        profile: profileName,
+        cwd: effectiveWorkspace,
+        session_mode: sessionMode,
+        deadline_at: deadlineAt,
+        idle_timeout_ms: idleTimeoutMs,
         policy_summary: described.policy_summary,
         blockers: described.blockers,
         warnings,
-        ...(preflight ? { preflight } : {}),
-        effective_config: effectiveConfig,
+        dry_run: false,
       })
+    } catch (e) {
+      if (worktreeCreation) {
+        removeJobWorktree({
+          root: ctx.paths.root,
+          path: worktreeCreation.path,
+          branch: worktreeCreation.branch,
+          force: true,
+        })
+      }
+      throw e
     }
-
-    // Locks first: a lost race must leave nothing behind, and
-    // no DB row references this job_id yet, so there is nothing to unwind.
-    acquireJobLocks(ctx.store, {
-      jobId,
-      cwd,
-      writeMode: profileDef.write,
-      sessionId,
-      // The ceiling wins over the server default when it names a number; it was
-      // validated against MAX_RUNNING_JOBS_CAP at load, so nothing here has to
-      // clamp it again.
-      maxRunning: ceiling.max_running_jobs ?? ctx.limits.max_running_jobs,
-      maxRunningSource: ceiling.max_running_jobs !== null ? 'ceiling' : 'default',
-      ceilingPath: ceiling.path ?? ceilingPath(ctx.paths),
-    })
-
-    if (!sessionExists) {
-      createSession(ctx.store, {
-        sessionId,
-        cwd,
-        model: input.model ?? null,
-        effort: input.effort ?? null,
-        profile: profileName,
-      })
-    }
-
-    createJob(ctx.store, {
-      jobId,
-      sessionId,
-      cwd,
-      profile: profileName,
-      writeMode: profileDef.write,
-      sessionMode,
-      onDenial,
-      deadlineAt,
-      requestedBy: input.requested_by ?? null,
-      parentTaskId: input.parent_task_id ?? null,
-    })
-    chmodDbFiles(ctx.store.paths.db)
-
-    const paths = jobPaths(ctx.paths, jobId)
-    ensureJobDirs(paths)
-
-    const request: JobRequest = { ...input }
-    writeJsonAtomic(paths.request, request)
-    writeJsonAtomic(paths.effectiveConfig, effectiveConfig)
-    writeJsonAtomic(paths.policy, policy)
-
-    // Turn 1 of a session-mode job. The runner's inbox relay writes it to agy's
-    // stdin as soon as the process is up; `agy_send` appends later turns to the
-    // same file. Written before the spawn so the relay can never miss it.
-    if (streamInput && input.prompt !== '') {
-      appendUserTurn(paths.inbox, input.prompt)
-    }
-
-    ensureGateHook(cwd, gatePath)
-    ensureGitExclude(cwd)
-
-    // Detached: the runner outlives this server process entirely.
-    // stdio is 'ignore' — the runner redirects agy's own stdout/stderr
-    // to job-directory files itself; nothing here needs a pipe.
-    const child = spawn(process.execPath, [binPath('runner'), jobId], {
-      cwd: ctx.paths.root,
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    })
-    child.unref()
-
-    return reply({
-      job_id: jobId,
-      session_id: sessionId,
-      lifecycle: 'queued',
-      profile: profileName,
-      cwd,
-      session_mode: sessionMode,
-      deadline_at: deadlineAt,
-      idle_timeout_ms: idleTimeoutMs,
-      policy_summary: described.policy_summary,
-      blockers: described.blockers,
-      warnings,
-      dry_run: false,
-    })
   } catch (e) {
     return errorReply(e)
   }

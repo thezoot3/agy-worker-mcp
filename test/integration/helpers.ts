@@ -63,9 +63,13 @@ export function makeProject(opts?: { git?: boolean }): TestProject {
   const root = mkdtempSync(join(tmpdir(), `agy-proj-${tag}-`))
   const fakeStateDir = mkdtempSync(join(tmpdir(), `agy-fakestate-${tag}-`))
   if (opts?.git) {
-    execFileSync('git', ['init', '-q'], { cwd: root })
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
     execFileSync('git', ['config', 'user.name', 'test'], { cwd: root })
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: root })
+    writeFileSync(join(root, 'tracked.txt'), 'content')
+    execFileSync('git', ['add', '.'], { cwd: root })
+    execFileSync('git', ['commit', '-q', '-m', 'initial commit'], { cwd: root })
   }
   return {
     home,

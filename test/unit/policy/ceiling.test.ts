@@ -327,3 +327,26 @@ describe('additionalDirRoot — converts ceiling glob pattern to concrete direct
   })
 })
 
+describe('loadCeiling — link_paths validation', () => {
+  it('loads valid project-root-relative link_paths', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, link_paths: ['node_modules'] }))
+    const ceiling = loadCeiling({ dir: stateDir })
+    expect(ceiling.link_paths).toEqual(['node_modules'])
+  })
+
+  it('rejects absolute paths', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, link_paths: ['/abs'] }))
+    expect(() => loadCeiling({ dir: stateDir })).toThrow(ValidationError)
+  })
+
+  it('rejects entries containing .. segments', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, link_paths: ['../x'] }))
+    expect(() => loadCeiling({ dir: stateDir })).toThrow(ValidationError)
+  })
+
+  it('rejects empty entries', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, link_paths: [''] }))
+    expect(() => loadCeiling({ dir: stateDir })).toThrow(ValidationError)
+  })
+})
+
