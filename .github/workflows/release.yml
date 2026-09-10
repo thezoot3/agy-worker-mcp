@@ -1,9 +1,20 @@
 name: Release
 
-# Publishes the package to npm. Two triggers, both manual in spirit:
+# Stages the package for npm. Two triggers, both manual in spirit:
 #   - a pushed tag `vX.Y.Z` whose version matches package.json
-#   - workflow_dispatch with `dry_run: true` (default) to rehearse without publishing
+#   - workflow_dispatch with `dry_run: true` (default) to rehearse without staging
 # Nothing here runs on ordinary pushes.
+#
+# This workflow does not publish. It stages (`npm stage publish`), and a human
+# with interactive 2FA approves — `npm stage approve`, or npmjs.com. That
+# asymmetry is the point: OIDC makes the workflow file itself a publishing
+# credential, and this package spawns agents on a user's machine with
+# `--dangerously-skip-permissions`, so a compromised repository must not be able
+# to reach those machines without a person present. Releases here are rare
+# enough that one approval costs nothing.
+#
+# Staged publishing needs npm >= 11.15.0 and Node >= 22.14 (setup-node's `22.x`
+# resolves well past that; the npm version is asserted below).
 #
 # Authentication is npm trusted publishing (OIDC): no long-lived token, the
 # `id-token: write` permission below is what authenticates the run. npm only
@@ -44,11 +55,22 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: npm
 
-      # Trusted publishing needs npm >= 11.5.1; node 22.x still bundles npm 10.
-      - name: npm new enough for trusted publishing
+      # Trusted publishing needs npm >= 11.5.1 and staged publishing >= 11.15.0;
+      # node 22.x still bundles npm 10. Assert rather than hope: a silently old
+      # npm fails at the publish step with "Unknown command: stage", after the
+      # tag is already pushed and the run is most of the way through.
+      - name: npm new enough for staged trusted publishing
         run: |
           npm install -g npm@latest
-          npm --version
+          version="$(npm --version)"
+          echo "npm ${version}"
+          major="${version%%.*}"
+          rest="${version#*.}"
+          minor="${rest%%.*}"
+          if [ "$major" -lt 11 ] || { [ "$major" -eq 11 ] && [ "$minor" -lt 15 ]; }; then
+            echo "npm ${version} is too old for 'npm stage publish' (needs >= 11.15.0)" >&2
+            exit 1
+          fi
 
       - run: npm ci
 
@@ -76,12 +98,41 @@ jobs:
           tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/CHANGELOG\.md$'
           tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/dist/contract/schema\.sql$'
 
-      - name: publish (dry run)
+      # Rehearses the real command, not a neighbouring one: `npm publish
+      # --dry-run` would keep passing long after the trusted publisher was
+      # narrowed to stage-only.
+      - name: stage (dry run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
-        run: npm publish --dry-run --provenance --access public
+        run: npm stage publish --dry-run --provenance --access public
 
-      - name: publish
+      # Staging, not publishing. Nothing is on the registry when this step
+      # succeeds: a human still has to run `npm stage approve agy-worker-mcp@<version>`
+      # (or approve on npmjs.com) with interactive 2FA. `npm stage publish`
+      # itself never prompts for 2FA regardless of token type, which is what
+      # makes it usable from CI; `approve` and `reject` always do, which is what
+      # keeps a compromised workflow from reaching a user's machine on its own.
+      # Provenance is attached here, at staging, not at approval.
+      - name: stage for approval
         if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
-        run: npm publish --provenance --access public
+        run: npm stage publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: say what is left to do
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          {
+            echo "### Staged, not published"
+            echo
+            echo "\`agy-worker-mcp@${version}\` is staged. Nothing is on the registry yet."
+            echo
+            echo "A human with 2FA finishes it:"
+            echo
+            echo '```sh'
+            echo "npm stage view agy-worker-mcp@${version}"
+            echo "npm stage approve agy-worker-mcp@${version}"
+            echo '```'
+            echo
+            echo "or approve it on npmjs.com. \`npm stage reject\` throws it away."
+          } >> "$GITHUB_STEP_SUMMARY"
