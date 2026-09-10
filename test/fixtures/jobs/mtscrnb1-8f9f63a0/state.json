@@ -1,0 +1,16 @@
+{
+  "job_id": "mtscrnb1-8f9f63a0",
+  "lifecycle": "finished",
+  "pid": 25819,
+  "pgid": 25819,
+  "proc_start_time": "2026년  9월  8일 화요일 16시 33분 16초",
+  "started_at": 1788852796152,
+  "finished_at": 1788852939695,
+  "updated_at": 1788852939695,
+  "timed_out": false,
+  "idle_closed": false,
+  "gate_confirmed": true,
+  "verify_done": false,
+  "phase": "done",
+  "runner_pid": 25817
+}

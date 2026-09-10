@@ -1,0 +1,162 @@
+/**
+ * Group 4 — Block detection. Targets: A7 (`ENVIRONMENT_BLOCK_SIGNATURES`
+ * phrase matching), A4 (whether path violations are Class 1 or Class 2).
+ *
+ * Both tests are **observational**. Assertions only check that the run completed,
+ * while actual findings are logged. Getting unexpected values is a success condition
+ * for discovering facts, not a failure condition.
+ */
+import { existsSync } from 'node:fs'
+
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  LIVE,
+  LIVE_EFFORT,
+  LIVE_MODEL,
+  LIVE_TIMEOUT_MS,
+  applyLiveEnv,
+  ensureBuilt,
+  makeLiveProject,
+  readEvents,
+  recordUsage,
+  replyJson,
+  type LiveProject,
+} from './helpers.js'
+
+const live = LIVE ? describe : describe.skip
+
+let project: LiveProject
+
+beforeAll(() => {
+  if (LIVE) ensureBuilt()
+})
+
+beforeEach(() => {
+  if (!LIVE) return
+  project = makeLiveProject()
+  applyLiveEnv(project)
+})
+
+/** Compact view of every tool step, which is where both classes show up. */
+function toolSteps(events: Array<Record<string, unknown>>): unknown[] {
+  return events
+    .filter((e) => e.event === 'step_update')
+    .map((e) => e.step_update as Record<string, unknown> | undefined)
+    .map((s) => ({
+      tool: s?.tool_name,
+      state: s?.state,
+      step_type: s?.step_type,
+      info: JSON.stringify(s?.tool_info ?? null).slice(0, 600),
+    }))
+}
+
+live('L10 — a sandboxed network command: which signature does agy actually surface (A7)', () => {
+  it('the real failure text is compared against ENVIRONMENT_BLOCK_SIGNATURES', async () => {
+    const { createContext } = await import('../../src/server/context.js')
+    const { handleStart } = await import('../../src/server/tools/start.js')
+    const { handleWait } = await import('../../src/server/tools/wait.js')
+    const { handleResult } = await import('../../src/server/tools/result.js')
+    const { ENVIRONMENT_BLOCK_SIGNATURES } = await import('../../src/contract/types.js')
+
+    const ctx = createContext()
+    const t0 = Date.now()
+    const started = replyJson(
+      await handleStart(ctx, {
+        prompt:
+          'Run the shell command: git ls-remote https://github.com/git/git.git — then tell me the exact error text if it failed.',
+        profile: 'general_worker',
+        model: LIVE_MODEL,
+        effort: LIVE_EFFORT,
+        timeout_ms: LIVE_TIMEOUT_MS,
+      } as never),
+    ) as { job_id: string }
+
+    const waited = replyJson(
+      await handleWait(ctx, { job_id: started.job_id, wait_ms: LIVE_TIMEOUT_MS } as never),
+    ) as { lifecycle: string; outcome: string }
+    const events = readEvents(ctx, started.job_id)
+    recordUsage({ test: 'L10', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
+
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
+      broker_summary?: unknown
+      agent_status?: string | null
+      verification?: { blockers?: unknown[] }
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      '[L10]',
+      JSON.stringify(
+        {
+          outcome: waited.outcome,
+          broker_summary: full.broker_summary,
+          agent_status: full.agent_status,
+          blockers: full.verification?.blockers,
+          known_signatures: ENVIRONMENT_BLOCK_SIGNATURES,
+          steps: toolSteps(events),
+        },
+        null,
+        1,
+      ).slice(0, 4000),
+    )
+
+    expect(waited.lifecycle).toBe('finished')
+    ctx.store.close()
+  })
+})
+
+live('L11 — writing outside the workspace: Class 1 or Class 2 (A4)', () => {
+  it.each([
+    ['general_worker', '/tmp/agy-live-outside-probe.txt'],
+    ['research_readonly', '/tmp/agy-live-outside-probe2.txt'],
+  ])('the shape of a sandbox path violation is recorded (%s)', async (profileName, outside) => {
+    const { createContext } = await import('../../src/server/context.js')
+    const { handleStart } = await import('../../src/server/tools/start.js')
+    const { handleWait } = await import('../../src/server/tools/wait.js')
+    const { handleResult } = await import('../../src/server/tools/result.js')
+
+    const ctx = createContext()
+    const t0 = Date.now()
+    const started = replyJson(
+      await handleStart(ctx, {
+        prompt: `Run the shell command: printf hello > ${outside} — then tell me the exact error text if it failed.`,
+        profile: profileName,
+        model: LIVE_MODEL,
+        effort: LIVE_EFFORT,
+        timeout_ms: LIVE_TIMEOUT_MS,
+      } as never),
+    ) as { job_id: string }
+
+    const waited = replyJson(
+      await handleWait(ctx, { job_id: started.job_id, wait_ms: LIVE_TIMEOUT_MS } as never),
+    ) as { lifecycle: string; outcome: string }
+    const events = readEvents(ctx, started.job_id)
+    recordUsage({ test: `L11/${profileName}`, job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
+
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
+      broker_summary?: unknown
+      agent_status?: string | null
+      verification?: { blockers?: unknown[] }
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `[L11 ${profileName}]`,
+      JSON.stringify(
+        {
+          profile: profileName,
+          landed_outside: existsSync(outside),
+          outcome: waited.outcome,
+          broker_summary: full.broker_summary,
+          agent_status: full.agent_status,
+          blockers: full.verification?.blockers,
+          steps: toolSteps(events),
+        },
+        null,
+        1,
+      ).slice(0, 4000),
+    )
+
+    expect(waited.lifecycle).toBe('finished')
+    ctx.store.close()
+  })
+})

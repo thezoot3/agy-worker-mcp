@@ -1,0 +1,123 @@
+{
+  "schema_version": 3,
+  "job_id": "mtscrnb1-8f9f63a0",
+  "session_id": "73af16b8-ff88-4d77-a3fb-450042f5d8ba",
+  "conversation_id": "e7a5bc30-b298-4897-8d1a-7c0f82d9d899",
+  "lifecycle": "finished",
+  "cwd": "/workspace/.worktrees/pr4",
+  "profile": "general_worker",
+  "session_mode": "oneshot",
+  "created_at": 1788852796094,
+  "started_at": 1788852796152,
+  "finished_at": 1788852939695,
+  "agent_report": {
+    "status": "ERROR",
+    "response": "",
+    "error": "timeout waiting for response",
+    "num_turns": 1,
+    "usage": {
+      "input_tokens": 170332,
+      "output_tokens": 12363,
+      "thinking_tokens": 9535,
+      "cache_read_tokens": 1646888,
+      "total_tokens": 182695
+    },
+    "conversation_id": "e7a5bc30-b298-4897-8d1a-7c0f82d9d899"
+  },
+  "broker_summary": {
+    "headline": "canceled: agy_cancel stopped this job.",
+    "outcome": "canceled",
+    "exit_code": 1,
+    "duration_ms": 143543,
+    "counts": {
+      "events": 95,
+      "steps": 93,
+      "tool_calls": 30,
+      "tool_errors": 0,
+      "turns": 1,
+      "malformed_lines": 0
+    },
+    "log_tail": [
+      "#24 view_file started",
+      "#24 view_file finished",
+      "#26 view_file started",
+      "#26 view_file finished",
+      "#28 view_file started",
+      "#28 view_file finished",
+      "#30 view_file started",
+      "#30 view_file finished",
+      "#32 view_file started",
+      "#32 view_file finished",
+      "#34 view_file started",
+      "#34 view_file finished",
+      "#36 view_file started",
+      "#36 view_file finished",
+      "#38 view_file started",
+      "#38 view_file finished",
+      "#40 view_file started",
+      "#40 view_file finished",
+      "#42 grep_search started",
+      "#42 grep_search finished",
+      "#44 view_file started",
+      "#44 view_file finished",
+      "#46 view_file started",
+      "#46 view_file finished",
+      "#48 grep_search started",
+      "#48 grep_search finished",
+      "#50 view_file started",
+      "#50 view_file finished",
+      "#52 grep_search started",
+      "#52 grep_search finished",
+      "#54 view_file started",
+      "#54 view_file finished",
+      "#56 view_file started",
+      "#56 view_file finished",
+      "#58 view_file started",
+      "#58 view_file finished",
+      "#60 run_command started: npm run typecheck",
+      "#60 run_command finished: npm run typecheck",
+      "#62 run_command started: npm test",
+      "[ERROR] timeout waiting for response"
+    ]
+  },
+  "verification": {
+    "blockers": [
+      {
+        "source": "broker",
+        "actionable": true,
+        "remedy": "have the job create test/integration/additional-dirs-default.test.ts, or drop it from expected_artifacts",
+        "blocks_outcome": true,
+        "tool": null,
+        "command": null,
+        "message": "expected artifact missing: test/integration/additional-dirs-default.test.ts (/workspace/.worktrees/pr4/test/integration/additional-dirs-default.test.ts)",
+        "detail": {
+          "path": "test/integration/additional-dirs-default.test.ts",
+          "absolute": "/workspace/.worktrees/pr4/test/integration/additional-dirs-default.test.ts",
+          "exists": false,
+          "size": null
+        }
+      }
+    ],
+    "expected_artifacts": [
+      {
+        "path": "test/integration/additional-dirs-default.test.ts",
+        "absolute": "/workspace/.worktrees/pr4/test/integration/additional-dirs-default.test.ts",
+        "exists": false,
+        "size": null
+      }
+    ],
+    "changed_files": [
+      "?? node_modules"
+    ],
+    "warnings": [
+      "broker check: expected artifact missing: test/integration/additional-dirs-default.test.ts (/workspace/.worktrees/pr4/test/integration/additional-dirs-default.test.ts) — remedy: have the job create test/integration/additional-dirs-default.test.ts, or drop it from expected_artifacts"
+    ],
+    "contract_status": "not_required",
+    "checked_at": 1788852939803,
+    "verify": null
+  },
+  "agent_status": "ERROR",
+  "contract_status": "not_required",
+  "structured_output": null,
+  "finalized_at": 1788852939779
+}

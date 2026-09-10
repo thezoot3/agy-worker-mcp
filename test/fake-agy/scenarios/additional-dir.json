@@ -1,0 +1,30 @@
+{
+  "name": "additional-dir",
+  "description": "M4: --add-dir extends the sandbox-exec allowlist, not just the workspace read/write roots. Same CommandLine as sandbox-escape.json (`ls ~/.jdks`, effective BypassSandbox false), but meant to be run with that path also passed as a second --add-dir — findEscapingPath then finds it inside ctx.addDirs, so agy.mjs does not synthesize an 'Operation not permitted' failure and the scripted `output` below is used instead, exactly like an ordinary allowed command.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.9, "usage": [16000, 60] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "ls ~/.jdks", "BypassSandbox": true },
+          "tool_action": "Listing JDKs",
+          "tool_summary": "ls ~/.jdks",
+          "output": "jdk-25.0.4.1+1\n",
+          "duration_seconds": 0.06
+        },
+        {
+          "type": "agent_response",
+          "chunks": ["jdk-25.0.4.1+1"],
+          "duration_seconds": 1.0,
+          "usage": [16100, 20]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "jdk-25.0.4.1+1",
+      "duration_seconds": 2.0
+    }
+  ]
+}

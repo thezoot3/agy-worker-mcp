@@ -1,0 +1,29 @@
+{
+  "name": "sandbox-escape",
+  "description": "M3 variant A / M4's containment check: run_command reaches for an absolute path (`~/.jdks`, expanded) outside every --add-dir root while the effective BypassSandbox is false. Needs a hook that returns {\"decision\":\"allow\",\"overwrite\":{\"BypassSandbox\":false}} — agy.mjs computes the 'Operation not permitted' shell failure itself (findEscapingPath) rather than reading a scripted output; the step stays DONE, not ERROR, and result.status stays SUCCESS. Contrast with additional-dir.json, which targets the same path but with that path registered as a second --add-dir.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.9, "usage": [16000, 60] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "ls ~/.jdks", "BypassSandbox": true },
+          "tool_action": "Listing JDKs",
+          "tool_summary": "ls ~/.jdks",
+          "duration_seconds": 0.06
+        },
+        {
+          "type": "agent_response",
+          "chunks": ["The sandbox does not have permission to access that path."],
+          "duration_seconds": 1.0,
+          "usage": [16100, 30]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "The sandbox does not have permission to access that path.",
+      "duration_seconds": 2.0
+    }
+  ]
+}

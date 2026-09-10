@@ -1,0 +1,16 @@
+{
+  "job_id": "mtsdyqbd-31e956b5",
+  "lifecycle": "finished",
+  "pid": 29633,
+  "pgid": 29633,
+  "proc_start_time": "2026년  9월  8일 화요일 17시 06분 46초",
+  "started_at": 1788854806264,
+  "finished_at": 1788855171287,
+  "updated_at": 1788855171287,
+  "timed_out": false,
+  "idle_closed": false,
+  "gate_confirmed": true,
+  "verify_done": true,
+  "phase": "done",
+  "runner_pid": 29631
+}

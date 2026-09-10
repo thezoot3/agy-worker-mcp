@@ -1,0 +1,38 @@
+{
+  "name": "happy",
+  "description": "Clean single turn with one allowed run_command. Mirrors .spike/out/run1.events.ndjson step for step. CommandLine is `git status` (0.2.0: PR2 removed default_decision, so an unmatched command is now denied at decide()'s step-7 default — the fixture must actually sit in both shipped profiles' allow ceilings, not just be 'harmless').",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        {
+          "type": "agent_response",
+          "chunks": [],
+          "duration_seconds": 1.295238,
+          "usage": [16015, 80]
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "git status" },
+          "tool_action": "Checking repo status",
+          "tool_summary": "git status",
+          "output": "On branch main\nnothing to commit, working tree clean\n",
+          "duration_seconds": 0.062982
+        },
+        {
+          "type": "agent_response",
+          "chunks": [
+            "The command `git status` produced the",
+            " following stdout:\n\n```\nOn branch main\nnothing to commit, working tree clean\n```\n"
+          ],
+          "duration_seconds": 1.416846,
+          "usage": [16183, 28]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "The command `git status` produced the following stdout:\n\n```\nOn branch main\nnothing to commit, working tree clean\n```\n",
+      "duration_seconds": 2.811859
+    }
+  ]
+}

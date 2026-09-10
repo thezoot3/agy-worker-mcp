@@ -1,0 +1,16 @@
+{
+  "job_id": "mtsdz8oj-63578581",
+  "lifecycle": "finished",
+  "pid": 32169,
+  "pgid": 32169,
+  "proc_start_time": "2026년  9월  8일 화요일 17시 07분 10초",
+  "started_at": 1788854830052,
+  "finished_at": 1788855266986,
+  "updated_at": 1788855266986,
+  "timed_out": false,
+  "idle_closed": false,
+  "gate_confirmed": true,
+  "verify_done": true,
+  "phase": "done",
+  "runner_pid": 32167
+}

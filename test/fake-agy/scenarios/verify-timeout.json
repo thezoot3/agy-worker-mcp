@@ -1,0 +1,25 @@
+{
+  "name": "verify-timeout",
+  "description": "PR6's verify_command runs after agy exits — it is not part of agy's own protocol, so this scenario is just an ordinary successful turn, step for step like happy.json (CommandLine must sit in both shipped profiles' allow ceilings, same as that fixture's own comment explains — `echo` does not). The slow verify command itself (e.g. `sleep 999`) plus a short verify_timeout_ms is configured on agy_start by the test that uses this scenario, not by anything here.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.9, "usage": [16000, 60] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "git status" },
+          "tool_action": "Checking repo status",
+          "tool_summary": "git status",
+          "output": "On branch main\nnothing to commit, working tree clean\n",
+          "duration_seconds": 0.05
+        },
+        { "type": "agent_response", "chunks": ["done"], "duration_seconds": 0.9, "usage": [16060, 10] }
+      ],
+      "status": "SUCCESS",
+      "response": "done",
+      "duration_seconds": 2.0
+    }
+  ]
+}

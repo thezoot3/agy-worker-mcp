@@ -1,0 +1,68 @@
+{
+  "name": "agy-worker-mcp",
+  "version": "0.3.1",
+  "description": "Unofficial MCP server that drives Google's Antigravity CLI (agy) as an asynchronous worker agent",
+  "type": "module",
+  "license": "MIT",
+  "author": "Siwoo Ryu",
+  "homepage": "https://github.com/thezoot3/agy-worker-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thezoot3/agy-worker-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thezoot3/agy-worker-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "antigravity",
+    "agy",
+    "agent",
+    "worker",
+    "claude-code",
+    "codex"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "agy-worker-mcp": "dist/server.js",
+    "agy-worker-runner": "dist/runner.js",
+    "agy-worker-gate": "dist/gate.js",
+    "agy-worker-setup": "dist/setup.js"
+  },
+  "main": "dist/server.js",
+  "exports": {
+    ".": "./dist/server.js",
+    "./contract": "./dist/contract/index.js"
+  },
+  "files": [
+    "dist",
+    "skills",
+    "commands",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').copyFileSync('src/contract/schema.sql','dist/contract/schema.sql')\"",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:live": "AGY_LIVE=1 vitest run --config vitest.live.config.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}

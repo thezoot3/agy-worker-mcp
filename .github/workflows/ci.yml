@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` runs the `prepare` script, so this also proves the build works.
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # Runs against test/fake-agy only. The real `agy` binary is never invoked
+      # here — every real invocation would spend account quota.
+      - run: npm test
+
+      - name: verify the packed tarball has the built entry points
+        run: |
+          npm pack --silent >/dev/null
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/dist/(server|runner|gate)\.js$'

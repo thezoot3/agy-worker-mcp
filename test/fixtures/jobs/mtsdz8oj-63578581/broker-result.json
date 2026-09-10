@@ -1,0 +1,200 @@
+{
+  "schema_version": 3,
+  "job_id": "mtsdz8oj-63578581",
+  "session_id": "cb8bfaff-8417-4439-b7e7-ca38d590ccd0",
+  "conversation_id": "a90211b7-3665-4e9c-8209-4f02b10c558f",
+  "lifecycle": "finished",
+  "cwd": "/workspace/.worktrees/pr7b",
+  "profile": "general_worker",
+  "session_mode": "oneshot",
+  "created_at": 1788854830003,
+  "started_at": 1788854830052,
+  "finished_at": 1788855266986,
+  "agent_report": {
+    "status": "SUCCESS",
+    "response": "`agy-worker-mcp` 6개 MCP tool 핸들러에 대한 단위 테스트 작성을 완료했습니다.\n\n`src/` 구현 코드는 일절 수정하지 않았으며, 기존의 placeholder 파일 6개를 [`replace_file_content`](file:///workspace/.worktrees/pr7b)를 통해 온전한 단위 테스트 스위트로 대체했습니다.\n\n---\n\n### 1. 테스트 결과 요약\n\n- `npm run typecheck`: **0 errors** (통과)\n- `npx vitest run test/unit/server`: **7개 파일 28개 테스트 전체 통과**\n\n| 테스트 파일 | 테스트 수 | 정상 경로 | 오류/엣지 경로 | 버그 탐지 (`it.fails`) |\n|---|---|---|---|---|\n| [cancel.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/cancel.test.ts) | 4 | 2 (queued 취소 → canceling, 이미 finished 취소 멱등성) | 1 (`JOB_NOT_FOUND`) | 1 (queued 취소 후 `finished`/`canceled` 미전이) |\n| [list-jobs.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/list-jobs.test.ts) | 4 | 1 (전체 조회 정렬, lifecycle 필터, limit) | 2 (SQLite 타입 오류, undefined 입력) | 1 (`listJobsInput` 스키마 검증 누락) |\n| [logs.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/logs.test.ts) | 3 | 1 (cursor 및 tail_lines 읽기) | 2 (`JOB_NOT_FOUND`, cursor+tail 상호 배타성 검증) | - |\n| [result.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/result.test.ts) | 5 | 2 (summary 반환, section별 필터 및 페이징) | 3 (미완료 안내 메시지, 미작성 안내 메시지, `JOB_NOT_FOUND`) | - |\n| [send.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/send.test.ts) | 5 | 1 (inbox.jsonl 에 user turn 및 close 기록) | 4 (finished 잡, oneshot 잡, 파라미터 누락, `JOB_NOT_FOUND`) | - |\n| [sessions.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/sessions.test.ts) | 4 | 2 (목록 조회 및 state 필터, session get) | 2 (session_id 누락 검증, 없는 session get/close) | - |\n| *(기존)* [capabilities-models.test.ts](file:///workspace/.worktrees/pr7b/test/unit/server/capabilities-models.test.ts) | 3 | 3 | - | - |\n| **합계** | **28** | | | |\n\n---\n\n### 2. 발견된 버그 및 특이사항 (`it.fails` 기록)\n\n1. **[`handleListJobs`](file:///workspace/.worktrees/pr7b/src/server/tools/listJobs.ts#L26) 입력 Zod 스키마 검증 누락**\n   - **현상**: `listJobsInput` Zod 스키마에는 `limit: z.number().positive()` 및 `lifecycle: z.array(...)` 등이 정의되어 있으나, [`handleListJobs`](file:///workspace/.worktrees/pr7b/src/server/tools/listJobs.ts#L26) 내부에서 `listJobsInput.parse(input)`를 호출하지 않습니다.\n   - **영향**: 음수 `limit` (`{ limit: -5 }`) 또는 유효하지 않은 `lifecycle` 배열 인자를 전달해도 `VALIDATION` 에러가 발생하지 않고 무시된 채 정상 응답(`{ jobs: [...], count: ... }`)으로 반환됩니다.\n   - **테스트**: [`list-jobs.test.ts`](file:///workspace/.worktrees/pr7b/test/unit/server/list-jobs.test.ts) 내 `it.fails`로 등록.\n\n2. **[`handleCancel`](file:///workspace/.worktrees/pr7b/src/server/tools/cancel.ts#L27) 및 [`reconcileJob`](file:///workspace/.worktrees/pr7b/src/broker/reconcile.ts#L139): `pid: null`인 queued 잡 취소 시 영구 `canceling` 체류**\n   - **현상**: 프로세스가 생성되지 않은 `queued` 상태의 job을 `handleCancel`로 취소하면 lifecycle이 `'canceling'`으로 변경됩니다. 하지만 [`reconcileJob`](file:///workspace/.worktrees/pr7b/src/broker/reconcile.ts#L192)은 `if (job.pid === null) return job`으로 즉시 반환하므로, runner 프로세스가 없어 `exit_code`가 영원히 생성되지 않는 job은 deadline이 지날 때까지 `'canceling'` 상태에 머뭅니다.\n   - **영향**: `'canceling'` 상태는 `LIVE_LIFECYCLES`에 포함되므로 서버의 동시 실행 한도(`max_running_jobs`) 및 lock을 계속 점유하게 됩니다.\n   - **테스트**: [`cancel.test.ts`](file:///workspace/.worktrees/pr7b/test/unit/server/cancel.test.ts) 내 `it.fails`로 등록.\n",
+    "error": null,
+    "num_turns": 1,
+    "usage": {
+      "input_tokens": 431462,
+      "output_tokens": 54655,
+      "thinking_tokens": 36639,
+      "cache_read_tokens": 7279134,
+      "total_tokens": 486117
+    },
+    "conversation_id": "a90211b7-3665-4e9c-8209-4f02b10c558f"
+  },
+  "broker_summary": {
+    "headline": "verified success: exit 0, agy reported SUCCESS, 6 expected artifact(s) confirmed, no permission or environment blocks. (non-blocking: 1 tool error) verify: exit 0 (20.1s).",
+    "outcome": "verified_success",
+    "exit_code": 0,
+    "duration_ms": 436934,
+    "counts": {
+      "events": 310,
+      "steps": 308,
+      "tool_calls": 90,
+      "tool_errors": 1,
+      "turns": 1,
+      "malformed_lines": 0
+    },
+    "log_tail": [
+      "#144 replace_file_content finished",
+      "#146 run_command started: npx vitest run test/unit/server/result.test.ts",
+      "#146 run_command finished: npx vitest run test/unit/server/result.test.ts",
+      "#148 view_file started",
+      "#148 view_file finished",
+      "#150 view_file started",
+      "#150 view_file finished",
+      "#152 view_file started",
+      "#152 view_file finished",
+      "#154 view_file started",
+      "#154 view_file finished",
+      "#156 view_file started",
+      "#156 view_file finished",
+      "#158 replace_file_content started",
+      "#158 replace_file_content finished",
+      "#160 run_command started: npx vitest run test/unit/server/send.test.ts",
+      "#160 run_command finished: npx vitest run test/unit/server/send.test.ts",
+      "#162 view_file started",
+      "#162 view_file finished",
+      "#164 replace_file_content started",
+      "#164 replace_file_content finished",
+      "#166 run_command started: npx vitest run test/unit/server/sessions.test.ts",
+      "#166 run_command finished: npx vitest run test/unit/server/sessions.test.ts",
+      "#168 run_command started: npx vitest run test/unit/server",
+      "#168 run_command finished: npx vitest run test/unit/server",
+      "#170 run_command started: npm run typecheck",
+      "#170 run_command finished: npm run typecheck",
+      "#172 run_command started: git status",
+      "#172 run_command finished: git status",
+      "#174 run_command started: git status --short test/unit/server/",
+      "#174 run_command finished: git status --short test/unit/server/",
+      "#176 run_command started: ls -la test/unit/server/",
+      "#176 run_command finished: ls -la test/unit/server/",
+      "#178 run_command started: git diff src/",
+      "#178 run_command finished: git diff src/",
+      "#180 run_command started: npm run typecheck",
+      "#180 run_command finished: npm run typecheck",
+      "#182 run_command started: npx vitest run test/unit/server",
+      "#182 run_command finished: npx vitest run test/unit/server",
+      "…서버의 동시 실행 한도(`max_running_jobs`) 및 lock을 계속 점유하게 됩니다. - **테스트**: [`cancel.test.ts`](file:///workspace/.worktrees/pr7b/test/unit/server/cancel.test.ts) 내 `it.fails`로 등록."
+    ]
+  },
+  "verification": {
+    "blockers": [
+      {
+        "tool": "view_file",
+        "command": null,
+        "detail": {
+          "class": 1,
+          "tool": "view_file",
+          "command": null,
+          "required_rule": null,
+          "policy": null,
+          "source": "agy",
+          "message": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: open /workspace/.worktrees/pr7b/src/store/schema.sql: no such file or directory",
+          "step_idx": 44
+        },
+        "source": "tool_error",
+        "actionable": false,
+        "remedy": null,
+        "blocks_outcome": false,
+        "message": "the tool call failed with no refusal signature we recognize, so this is not a permission problem we can confirm. declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: open /workspace/.worktrees/pr7b/src/store/schema.sql: no such file or directory"
+      }
+    ],
+    "expected_artifacts": [
+      {
+        "path": "test/unit/server/cancel.test.ts",
+        "absolute": "/workspace/.worktrees/pr7b/test/unit/server/cancel.test.ts",
+        "exists": true,
+        "size": 3923
+      },
+      {
+        "path": "test/unit/server/list-jobs.test.ts",
+        "absolute": "/workspace/.worktrees/pr7b/test/unit/server/list-jobs.test.ts",
+        "exists": true,
+        "size": 4271
+      },
+      {
+        "path": "test/unit/server/logs.test.ts",
+        "absolute": "/workspace/.worktrees/pr7b/test/unit/server/logs.test.ts",
+        "exists": true,
+        "size": 3892
+      },
+      {
+        "path": "test/unit/server/result.test.ts",
+        "absolute": "/workspace/.worktrees/pr7b/test/unit/server/result.test.ts",
+        "exists": true,
+        "size": 6498
+      },
+      {
+        "path": "test/unit/server/send.test.ts",
+        "absolute": "/workspace/.worktrees/pr7b/test/unit/server/send.test.ts",
+        "exists": true,
+        "size": 4873
+      },
+      {
+        "path": "test/unit/server/sessions.test.ts",
+        "absolute": "/workspace/.worktrees/pr7b/test/unit/server/sessions.test.ts",
+        "exists": true,
+        "size": 5030
+      }
+    ],
+    "changed_files": [
+      " M .gitignore",
+      " M README.md",
+      " M docs/operations.md",
+      " M docs/permissions.md",
+      " M docs/tools.md",
+      " M src/broker/blockers.ts",
+      " M src/broker/reconcile.ts",
+      " M src/broker/result.ts",
+      " M src/contract/errors.ts",
+      " M src/contract/types.ts",
+      " M src/events/cursor.ts",
+      " M src/gate/bind.ts",
+      " M src/gate/gate.ts",
+      " M src/policy/ceiling.ts",
+      " M src/policy/containment.ts",
+      " M src/policy/profiles.ts",
+      " M src/policy/rules.ts",
+      " M src/runner/runner.ts",
+      " M src/server/instructions.ts",
+      " M src/server/tools/capabilities.ts",
+      " M src/server/tools/start.ts",
+      " M src/server/tools/wait.ts",
+      " M test/integration/capabilities-ceiling.test.ts",
+      " M test/integration/start-policy.test.ts",
+      " M test/integration/verify-command.test.ts",
+      " M test/unit/events/cursor.test.ts",
+      " M test/unit/policy/ceiling.test.ts",
+      " M test/unit/policy/profiles.test.ts",
+      "?? node_modules",
+      "?? test/integration/additional-dirs-default.test.ts",
+      "?? test/integration/start-preflight.test.ts",
+      "?? test/unit/broker/reconcile.test.ts",
+      "?? test/unit/policy/command-policy.test.ts",
+      "?? test/unit/policy/profiles.golden.test.ts",
+      "?? test/unit/policy/rules-audit.test.ts",
+      "?? test/unit/server/"
+    ],
+    "warnings": [
+      "tool error [view_file]: the tool call failed with no refusal signature we recognize, so this is not a permission problem we can confirm. declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: open /workspace/.worktrees/pr7b/src/store/schema.sql: no such file or directory — not actionable: no permissions.allow rule will change this."
+    ],
+    "contract_status": "not_required",
+    "checked_at": 1788855267010,
+    "verify": {
+      "command": "npm run typecheck && npm test",
+      "exit_code": 0,
+      "signal": null,
+      "started_at": 1788855246829,
+      "duration_ms": 20149,
+      "timed_out": false,
+      "output_tail": "block is detected even though status stays SUCCESS, and blocks verified_success > a \"Could not resolve host\" tool output is caught by broker/verify.ts without any hook firing (job forced sandboxed)  2088ms\n   ✓ #14 — a Class 2 (silent environment) block is detected even though status stays SUCCESS, and blocks verified_success > the same output on a job that ran unsandboxed (general_worker default) is a warning, not a blocker  2095ms\n   ✓ #15 — a missing expected artifact keeps the job out of verified_success > happy scenario, plus an expected_artifacts entry the fake agy never creates  1683ms\n   ✓ #15 — a missing expected artifact keeps the job out of verified_success > the same artifact actually present makes the job verified_success  662ms\n   ✓ #16 — on_denial:\"abort\" terminates the job on the first policy denial > a general_worker job with on_denial:\"abort\" running a hard-denied command is canceled, not left running to completion  564ms\n   ✓ #18 — PR2: subagent tools are denied (M2), and a bound job's gate-log never carries \"ask\" (I1) > subagent-bypass ends blocked, with gate blockers for define_subagent/invoke_subagent  862ms\n   ✓ PR3 §3.1/§3.2 — hooks.json entry lifecycle > once the job finishes and reconcile runs (any tool call triggers it), our key is gone and an unrelated key survives  1077ms\n   ✓ PR3 §3.1/§3.2 — hooks.json entry lifecycle > with two live jobs on the same cwd, finishing one keeps the entry (the other is still live)  987ms\n   ✓ PR3 §3.3 — runtime gate confirmation (I4) > happy path: gate_confirmed is true once the gate actually logs a verdict  663ms\n   ✓ PR3 §3.3 — runtime gate confirmation (I4) > hook-missing (AGY_FAKE_SKIP_HOOKS=1): the runner kills the job, gate_confirmed is false, and the broker reports process_error with a source:\"broker\" blocker  674ms\n\n Test Files  42 passed (42)\n      Tests  420 passed (420)\n   Start at  17:14:07\n   Duration  19.12s (transform 472ms, setup 0ms, collect 1.22s, tests 109.00s, environment 4ms, prepare 1.03s)\n\n"
+    }
+  },
+  "agent_status": "SUCCESS",
+  "contract_status": "not_required",
+  "structured_output": null,
+  "finalized_at": 1788855266996
+}

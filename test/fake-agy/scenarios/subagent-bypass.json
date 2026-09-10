@@ -1,0 +1,59 @@
+{
+  "name": "subagent-bypass",
+  "description": "Reproduces M2: the parent defines and invokes a subagent, and the subagent's own run_command reaches the PreToolUse hook under a conversationId different from the parent's. Uses this fake's `subagent_run_command` step-format extension (see README.md) — invoke_subagent's own step_update still carries the parent conversationId, but the nested run_command step_update carries a freshly generated one. gate.ts's bindConversation cannot match that id to any bound job, so it falls through to 'ask' — the undocumented policy bypass M2 found.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 1.0, "usage": [16000, 60] },
+        {
+          "type": "tool",
+          "tool_name": "define_subagent",
+          "parameters": {
+            "name": "echo-runner",
+            "description": "A simple subagent that runs a shell command and returns the output.",
+            "enable_write_tools": true,
+            "system_prompt": "You are a command runner. Run the requested shell command and report its output verbatim."
+          },
+          "tool_action": "Defining subagent",
+          "tool_summary": "define echo-runner",
+          "output": "",
+          "duration_seconds": 0.05
+        },
+        {
+          "type": "tool",
+          "tool_name": "invoke_subagent",
+          "parameters": {
+            "Subagents": [
+              {
+                "TypeName": "echo-runner",
+                "Role": "Command Runner",
+                "Prompt": "Run the shell command `echo from-subagent` and report back the exact output you see."
+              }
+            ]
+          },
+          "tool_action": "Invoking subagent",
+          "tool_summary": "invoke echo-runner",
+          "output": "The command `echo from-subagent` was executed successfully (exit code 0). Output: from-subagent\n",
+          "duration_seconds": 0.5,
+          "subagent_run_command": {
+            "parameters": { "CommandLine": "echo from-subagent" },
+            "tool_action": "Running subagent command",
+            "tool_summary": "echo from-subagent",
+            "output": "from-subagent\n",
+            "duration_seconds": 0.06
+          }
+        },
+        {
+          "type": "agent_response",
+          "chunks": ["The subagent reported: from-subagent"],
+          "duration_seconds": 1.0,
+          "usage": [16150, 20]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "The subagent reported: from-subagent",
+      "duration_seconds": 3.0
+    }
+  ]
+}

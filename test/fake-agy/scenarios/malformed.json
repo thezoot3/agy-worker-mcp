@@ -1,0 +1,23 @@
+{
+  "name": "malformed",
+  "description": "Structurally normal turn, but result.status is a value outside the measured AgyResultStatus enum ('SUCCESS' | 'ERROR') — a defensive-handling case rather than a hook/sandbox one. buildAgentReport() must fold this to agent_status 'unknown' rather than crash or silently treat it as SUCCESS. Also used as the base for tests that additionally corrupt events.ndjson on disk (appending a non-JSON or unterminated line mid-run) to exercise events/parse.ts and events/cursor.ts tolerance — that corruption is injected by the integration test itself, not by this file, since the fake binary always emits well-formed JSON lines.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.5, "usage": [16000, 30] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "echo ok" },
+          "output": "ok\n",
+          "duration_seconds": 0.05
+        },
+        { "type": "agent_response", "chunks": ["Done, in a weird way."], "duration_seconds": 0.5, "usage": [16050, 20] }
+      ],
+      "status": "UNKNOWN_STATUS",
+      "response": "Done, in a weird way.",
+      "duration_seconds": 1.2
+    }
+  ]
+}

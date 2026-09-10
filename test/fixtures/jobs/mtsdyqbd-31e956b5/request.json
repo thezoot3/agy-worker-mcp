@@ -1,0 +1,16 @@
+{
+  "prompt": "agy-worker-mcp 0.2.2 PR7(테스트 부채) 일부. 이 worktree 는 main 의 미커밋 변경을 이미 담고 있다. 목표: 테스트가 없는 코어 모듈 3개에 단위 테스트를 쓴다. 구현을 고치지 않는다(src/ 수정 금지). 테스트가 실제 버그를 드러내면 그 케이스는 `it.fails` 또는 `it.skip` + 주석으로 남기고 마지막 응답에 보고한다.\n\n작업 규칙(중요):\n- 세 파일은 placeholder 한 줄(`// placeholder — replace this whole file`)로 **이미 존재한다**: `test/unit/broker/blockers.test.ts`, `test/unit/gate/bind.test.ts`, `test/unit/gate/hooks-file.test.ts`. `replace_file_content` 로 그 줄을 전체 내용으로 바꾼다. `write_to_file`, `node -e` 로 파일을 만들지 않는다.\n- `npm test` 전체는 직접 돌리지 않는다(느려서 도구 timeout 남). `npm run typecheck`, `npx vitest run test/unit/<file>` 만 쓴다. `schedule` 도구 사용 금지. git add/commit 금지.\n- 기존 패턴을 따른다: `test/unit/helpers/store.ts` 의 `makeTestStore`/`newTestJob`/`markRunning`, `test/unit/broker/reconcile.test.ts`, `test/unit/gate/gate.test.ts`, `test/unit/policy/rules-audit.test.ts` 를 먼저 읽는다. 각 테스트 파일 머리에 무엇을 왜 고정하는지 짧은 주석.\n- 구현을 복붙해서 자기 자신과 비교하는 테스트 금지. 입력 → 관찰 가능한 출력(반환값, 파일 내용, DB 행)만 검증.\n\n내용:\n1. `test/unit/broker/blockers.test.ts` — `src/broker/blockers.ts`: `isAgyEngineRefusal`(참/거짓 각 2), `blockerFromDenial`(policy 'default' 는 actionable + remedy 에 required_rule; containment/deny_list/unsupported 는 actionable false), `blockerFromEnvironmentBlock`(정책 bypass_sandbox true 면 blocks_outcome false 경고 성격, sandbox_forced_by 'request'/'profile' 이면 actionable true, 'ceiling' 이면 false), `blockerFromGateMissing`, `blockerFromMissingArtifact`, `policyCeilingBlockers`(rejected_allow 1개 → blocker 1, allow 가 비면 collapse 트랩 blocker), `renderBlockers`/`summarizeBlockers`/`countActionable`/`hasOutcomeBlocker`, `describePolicy`(policy_summary 필드 + policy.warnings 가 warnings 에 병합). 각 함수의 정확한 시맨틱은 소스 주석에서 읽어라.\n2. `test/unit/gate/bind.test.ts` — `src/gate/bind.ts`: `recordBinding` 후 `lookupBoundJob` 이 job 반환, 미기록 conversation 은 null, `bindConversation` 이 job+policy+conversationId 를 묶고 finished job 이나 effective-config 없는 job 은 null(소스 확인), `loadJobPolicy` 가 effective-config.json 의 policy 를 읽고 `additional_dirs_source` 없으면 'none', `command_policy` 가 'denylist' 아니면 'allowlist' 로 기본값. effective-config.json 은 `jobPaths(store.paths, jobId).effectiveConfig` 경로에 직접 써서 준비.\n3. `test/unit/gate/hooks-file.test.ts` — `src/gate/hooks-file.ts`: 임시 workspace 에서 `ensureGateHook` 이 `.agents/` 아래 hooks 파일을 만들고 우리 항목(`GATE_HOOK_KEY`)을 넣는다; 기존 사용자 hooks 항목은 보존; 두 번 호출해도 중복 없음(멱등); `removeGateHook` 은 우리 항목만 제거하고 남은 사용자 항목은 유지, 파일이 없으면 조용히 통과. 파일 포맷은 소스에서 읽어라.\n\n완료 조건: `npm run typecheck` 0 에러, `npx vitest run test/unit/broker/blockers.test.ts test/unit/gate/bind.test.ts test/unit/gate/hooks-file.test.ts` 전부 통과. 마지막 응답: 파일별 테스트 수, 발견한 버그(있으면).",
+  "cwd": "/workspace/.worktrees/pr7a",
+  "profile": "general_worker",
+  "model": "gemini-3.8-flash-high",
+  "on_denial": "continue",
+  "timeout_ms": 2400000,
+  "expected_artifacts": [
+    "test/unit/broker/blockers.test.ts",
+    "test/unit/gate/bind.test.ts",
+    "test/unit/gate/hooks-file.test.ts"
+  ],
+  "verify_command": "npm run typecheck && npm test",
+  "verify_timeout_ms": 600000,
+  "requested_by": "claude-code 0.2.2 PR7a"
+}

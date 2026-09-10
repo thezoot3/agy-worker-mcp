@@ -1,0 +1,87 @@
+name: Release
+
+# Publishes the package to npm. Two triggers, both manual in spirit:
+#   - a pushed tag `vX.Y.Z` whose version matches package.json
+#   - workflow_dispatch with `dry_run: true` (default) to rehearse without publishing
+# Nothing here runs on ordinary pushes.
+#
+# Authentication is npm trusted publishing (OIDC): no long-lived token, the
+# `id-token: write` permission below is what authenticates the run. npm only
+# lets you register a trusted publisher for a package that already exists, so
+# the very first publish has to be bootstrapped with a short-lived granular
+# token in `NPM_TOKEN`. npm tries OIDC first and falls back to that token, so
+# the same workflow covers both: set the secret for the bootstrap run, register
+# the trusted publisher on npmjs.com, then delete the secret.
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run everything but skip `npm publish`'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build, verify, publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      # Trusted publishing needs npm >= 11.5.1; node 22.x still bundles npm 10.
+      - name: npm new enough for trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
+      - run: npm ci
+
+      - name: tag must match package.json version
+        if: github.ref_type == 'tag'
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          if [ "$pkg" != "${GITHUB_REF_NAME}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json ${pkg}" >&2
+            exit 1
+          fi
+
+      # Same gate as CI: typecheck + fake-agy suite. The real `agy` binary is
+      # never invoked (it would spend account quota).
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: verify the packed tarball
+        run: |
+          npm pack --silent >/dev/null
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/dist/(server|runner|gate)\.js$'
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/skills/agy-ceiling/SKILL\.md$'
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/commands/agy-ceiling\.md$'
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/dist/setup\.js$'
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/CHANGELOG\.md$'
+          tar -tzf agy-worker-mcp-*.tgz | grep -E 'package/dist/contract/schema\.sql$'
+
+      - name: publish (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: npm publish --dry-run --provenance --access public
+
+      - name: publish
+        if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run)
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

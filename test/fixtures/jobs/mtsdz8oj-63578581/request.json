@@ -1,0 +1,19 @@
+{
+  "prompt": "agy-worker-mcp 0.2.2 PR7(테스트 부채) 일부. 이 worktree 는 main 의 미커밋 변경을 이미 담고 있다. 목표: 테스트가 없는 MCP tool 핸들러 6개에 단위 테스트를 쓴다(핸들러당 정상 경로 1개 이상 + 오류 경로 1개 이상). 구현을 고치지 않는다(src/ 수정 금지). 테스트가 실제 버그를 드러내면 `it.fails`/`it.skip` + 주석으로 남기고 마지막 응답에 보고한다.\n\n작업 규칙(중요):\n- 여섯 파일은 placeholder 한 줄(`// placeholder — replace this whole file`)로 **이미 존재한다**: `test/unit/server/cancel.test.ts`, `list-jobs.test.ts`, `logs.test.ts`, `result.test.ts`, `send.test.ts`, `sessions.test.ts`(모두 `test/unit/server/` 아래). `replace_file_content` 로 그 줄을 전체 내용으로 바꾼다. `write_to_file`, `node -e` 로 파일을 만들지 않는다.\n- `npm test` 전체는 직접 돌리지 않는다(느려서 도구 timeout 남). `npm run typecheck`, `npx vitest run test/unit/server` 만 쓴다. `schedule` 도구 사용 금지. git add/commit 금지.\n- 먼저 읽을 것: `src/server/context.ts`(createContext, reply, errorReply), `src/server/tools/{cancel,listJobs,logs,result,send,sessions}.ts`, `test/unit/helpers/store.ts`(makeTestStore/newTestJob/markRunning), `test/unit/server/capabilities-models.test.ts`, `test/integration/start-preflight.test.ts`(핸들러 호출·`replyJson` 패턴; 단 통합 helpers 의 `ensureBuilt`/fake agy 는 쓰지 말고 `makeTestStore` 로 store 를 만든 뒤 `createContext()` 를 호출해 그 store 를 쓰게 하거나, context 가 store 를 받는 형태면 그것을 쓴다 — `context.ts` 를 보고 결정).\n- 각 테스트 파일 머리에 무엇을 고정하는지 짧은 주석. 구현 복붙 비교 금지, 입력 → 관찰 가능한 출력(reply JSON, DB 행, 파일)만.\n- 프로세스는 실제로 spawn 하지 않는다. `agy_cancel` 의 정상 경로는 `queued` 상태 job(pid 없음)을 취소해 lifecycle 이 `canceled` 로 바뀌는지 확인하는 정도면 된다; 살아있는 pid 가 필요하면 `process.pid` 를 쓰되 kill 은 절대 하지 않는다(해당 케이스는 건너뛴다).\n\n핸들러별 최소 케이스:\n- cancel: 없는 job_id → 오류 응답(isError, error 코드 확인); queued job 취소 → canceled.\n- listJobs: job 3개 만들고 필터(lifecycle/ profile 등, 스키마에 있는 것) 로 개수·정렬 확인; 잘못된 인자 → 오류.\n- logs: `jobPaths(...).events` 에 ndjson 몇 줄을 직접 써두고 cursor/tail 로 읽기; 없는 job → 오류.\n- result: finished job + `broker-result.json` 을 직접 써두고(`src/contract/types.ts` 의 BrokerResult 형태) 반환 확인; 아직 running 인 job → 오류 또는 명시된 응답(소스 확인).\n- send: running job 의 inbox 에 턴이 추가되는지(`src/runner/inbox.ts` 경로로 파일 확인); finished job 에 send → 오류.\n- sessions: 세션 2개(`src/store/sessions.ts` createSession) 만들고 목록 반환; 필터 하나.\n\n완료 조건: `npm run typecheck` 0 에러, `npx vitest run test/unit/server` 전부 통과. 마지막 응답: 파일별 테스트 수, 발견한 버그(있으면).",
+  "cwd": "/workspace/.worktrees/pr7b",
+  "profile": "general_worker",
+  "model": "gemini-3.8-flash-high",
+  "on_denial": "continue",
+  "timeout_ms": 2400000,
+  "expected_artifacts": [
+    "test/unit/server/cancel.test.ts",
+    "test/unit/server/list-jobs.test.ts",
+    "test/unit/server/logs.test.ts",
+    "test/unit/server/result.test.ts",
+    "test/unit/server/send.test.ts",
+    "test/unit/server/sessions.test.ts"
+  ],
+  "verify_command": "npm run typecheck && npm test",
+  "verify_timeout_ms": 600000,
+  "requested_by": "claude-code 0.2.2 PR7b"
+}

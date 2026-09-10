@@ -1,0 +1,360 @@
+/**
+ * Group 2 — Gate. Verifies whether the core claims of this project hold on
+ * real agy. Targets: A3 (hook failure mode), A5 (`permissionOverrides` scope).
+ *
+ * L6/L7 spawn `agy` directly without going through our stack. Because our `agy_start`
+ * always installs its own gate, observing intentionally broken hooks requires creating
+ * a workspace and `hooks.json` directly.
+ */
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  LIVE,
+  LIVE_EFFORT,
+  LIVE_MODEL,
+  LIVE_TIMEOUT_MS,
+  REPO_ROOT,
+  applyLiveEnv,
+  ensureBuilt,
+  makeLiveProject,
+  readEvents,
+  recordUsage,
+  replyJson,
+  writeWorkspaceFile,
+  type LiveProject,
+} from './helpers.js'
+
+const live = LIVE ? describe : describe.skip
+
+let project: LiveProject
+
+beforeAll(() => {
+  if (LIVE) ensureBuilt()
+})
+
+beforeEach(() => {
+  if (!LIVE) return
+  project = makeLiveProject()
+  applyLiveEnv(project)
+})
+
+live('L4 — our gate binds a real agy conversation and its denial survives exit 0 / SUCCESS', () => {
+  it('research_readonly refuses an interpreter and the broker reports blocked', async () => {
+    const { createContext } = await import('../../src/server/context.js')
+    const { handleStart } = await import('../../src/server/tools/start.js')
+    const { handleWait } = await import('../../src/server/tools/wait.js')
+    const { handleResult } = await import('../../src/server/tools/result.js')
+    const { getSession } = await import('../../src/store/sessions.js')
+
+    const ctx = createContext()
+    const t0 = Date.now()
+    const started = replyJson(
+      await handleStart(ctx, {
+        prompt:
+          'Run the shell command: python3 -c "print(41+1)" — then tell me the number it printed. Use the terminal, do not compute it yourself.',
+        profile: 'research_readonly',
+        model: LIVE_MODEL,
+        effort: LIVE_EFFORT,
+        timeout_ms: LIVE_TIMEOUT_MS,
+      } as never),
+    ) as { job_id: string; session_id: string }
+
+    const waited = replyJson(
+      await handleWait(ctx, { job_id: started.job_id, wait_ms: LIVE_TIMEOUT_MS } as never),
+    ) as { lifecycle: string; outcome: string }
+
+    const events = readEvents(ctx, started.job_id)
+    recordUsage({ test: 'L4', job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
+
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'all' } as never)) as {
+      broker_summary?: unknown
+      agent_status?: string | null
+      verification?: { blockers?: Array<{ source: string }> }
+    }
+    const session = getSession(ctx.store, started.session_id)
+    const { jobPaths } = await import('../../src/contract/paths.js')
+    const jp = jobPaths(ctx.paths, started.job_id)
+    const readOr = (p: string) => {
+      try {
+        return readFileSync(p, 'utf8')
+      } catch {
+        return '<absent>'
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      '[L4]',
+      JSON.stringify(
+        {
+          outcome: waited.outcome,
+            broker_summary: full.broker_summary,
+          agent_status: full.agent_status,
+          blockers: full.verification?.blockers,
+          conversation_id: session?.conversation_id,
+          hooks_json: readOr(join(project.root, '.agents', 'hooks.json')),
+          gate_log: readOr(jp.gateLog).slice(0, 3000),
+          steps: events
+            .filter((e) => e.event === 'step_update')
+            .map((e) => e.step_update as Record<string, unknown>)
+            .map((s) => ({ t: s?.step_type, tool: s?.tool_name, state: s?.state, params: JSON.stringify(s?.tool_info ?? null).slice(0, 300) })),
+        },
+        null,
+        1,
+      ),
+    )
+
+    // The gate can only have denied if it bound the conversation, which is the
+    // whole daemon-less binding claim.
+    expect(session?.conversation_id).toBeTruthy()
+    expect(waited.lifecycle).toBe('finished')
+    expect((full.verification?.blockers ?? []).filter((b) => b.source === 'gate').length).toBeGreaterThan(0)
+    expect(waited.outcome).toBe('blocked')
+
+    ctx.store.close()
+  })
+})
+
+live('L5 — the gate answers a foreign conversation with exactly the passthrough (no agy call)', () => {
+  it('dist/gate.js prints {"decision":"ask"} for a conversationId that is not one of our jobs', async () => {
+    const { createContext } = await import('../../src/server/context.js')
+    const ctx = createContext()
+    ctx.store.close()
+
+    const payload = JSON.stringify({
+      conversationId: 'not-ours-00000000-0000-0000-0000-000000000000',
+      toolCall: { name: 'run_command', args: { CommandLine: 'rm -rf /' } },
+      workspacePaths: [project.root],
+    })
+    const res = spawnSync(process.execPath, [join(REPO_ROOT, 'dist', 'gate.js')], {
+      input: payload,
+      encoding: 'utf8',
+      env: { ...process.env },
+    })
+    // eslint-disable-next-line no-console
+    console.log('[L5]', JSON.stringify({ status: res.status, stdout: res.stdout, stderr: res.stderr.slice(0, 200) }))
+
+    // ⚠ Anything but this — `{}`, empty stdout, a crash — silently denies every
+    // tool call in every one of the user's own interactive agy sessions.
+    expect(res.status).toBe(0)
+    expect(JSON.parse(res.stdout)).toEqual({ decision: 'ask' })
+  })
+})
+
+/**
+ * A1/A3 probe: run agy directly against a workspace whose only PreToolUse hook
+ * is deliberately broken, and read back what agy decided from the event stream.
+ */
+function runAgyWithHook(
+  workspace: string,
+  hookScript: string,
+  prompt: string,
+): { code: number | null; events: Array<Record<string, unknown>>; stderr: string } {
+  const agentsDir = join(workspace, '.agents')
+  mkdirSync(agentsDir, { recursive: true })
+  const scriptPath = join(workspace, 'hook.sh')
+  writeFileSync(scriptPath, hookScript, { mode: 0o700 })
+  chmodSync(scriptPath, 0o700)
+  writeFileSync(
+    join(agentsDir, 'hooks.json'),
+    JSON.stringify({
+      'live-probe': { PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: scriptPath, timeout: 15 }] }] },
+    }),
+  )
+
+  const res = spawnSync(
+    'agy',
+    [
+      `--print=${prompt}`,
+      '--output-format', 'stream-json',
+      '--add-dir', workspace,
+      '--sandbox',
+      '--model', LIVE_MODEL,
+      '--effort', LIVE_EFFORT,
+      '--print-timeout', '2m',
+    ],
+    { cwd: workspace, encoding: 'utf8', timeout: 150_000 },
+  )
+  const events = (res.stdout ?? '')
+    .split('\n')
+    .filter((l) => l.trim().length > 0)
+    .map((l) => {
+      try {
+        return JSON.parse(l) as Record<string, unknown>
+      } catch {
+        return { _unparsed: l }
+      }
+    })
+  return { code: res.status, events, stderr: (res.stderr ?? '').slice(0, 400) }
+}
+
+const PROBE_PROMPT = 'Run the shell command: echo hello-from-agy'
+
+live('L6 — what agy does when a PreToolUse hook fails (A3)', () => {
+  it('a hook that exits non-zero with no stdout', () => {
+    const { code, events, stderr } = runAgyWithHook(project.root, '#!/bin/sh\nexit 1\n', PROBE_PROMPT)
+    const steps = events.filter((e) => e.event === 'step_update').map((e) => e.step_update)
+    // eslint-disable-next-line no-console
+    console.log(
+      '[L6a non-zero exit]',
+      JSON.stringify({ code, stderr, steps: steps.map((s) => {
+            const u = s as Record<string, unknown>
+            return { state: u?.state, tool: u?.tool_name, info: u?.tool_info }
+          }) }, null, 1).slice(0, 2500),
+    )
+    // Observational: the assertion is only that agy ran at all. What it decided
+    // is the finding.
+    expect(events.length).toBeGreaterThan(0)
+  })
+
+  it('a hook that exits 0 but prints something that is not JSON', () => {
+    const { code, events, stderr } = runAgyWithHook(project.root, "#!/bin/sh\nprintf 'not json at all'\n", PROBE_PROMPT)
+    const steps = events.filter((e) => e.event === 'step_update').map((e) => e.step_update)
+    // eslint-disable-next-line no-console
+    console.log(
+      '[L6b non-JSON stdout]',
+      JSON.stringify({ code, stderr, steps: steps.map((s) => {
+            const u = s as Record<string, unknown>
+            return { state: u?.state, tool: u?.tool_name, info: u?.tool_info }
+          }) }, null, 1).slice(0, 2500),
+    )
+    expect(events.length).toBeGreaterThan(0)
+  })
+})
+
+live('L7 — how long a permissionOverrides grant lasts (A5)', () => {
+  it('a hook that grants an override on its first call and records every later call', () => {
+    const logPath = join(project.root, 'hook-calls.log')
+    // Grant an override on call 1, then log-and-passthrough. If the override is
+    // conversation-wide, the hook is simply not consulted again for that tool.
+    const script = `#!/bin/sh
+payload=$(cat)
+printf '%s\\n' "$payload" >> ${JSON.stringify(logPath)}
+if [ ! -f ${JSON.stringify(logPath + '.granted')} ]; then
+  : > ${JSON.stringify(logPath + '.granted')}
+  printf '{"decision":"allow","permissionOverrides":["command(echo)"]}'
+else
+  printf '{"decision":"ask"}'
+fi
+`
+    const { code, events } = runAgyWithHook(
+      project.root,
+      script,
+      'Run the shell command: echo one. Then run the shell command: echo two. Then run the shell command: echo three.',
+    )
+    let calls = 0
+    try {
+      calls = execFileSync('sh', ['-c', `wc -l < ${JSON.stringify(logPath)}`], { encoding: 'utf8' }).trim() as unknown as number
+      calls = Number(calls)
+    } catch {
+      calls = 0
+    }
+    const steps = events
+      .filter((e) => e.event === 'step_update')
+      .map((e) => e.step_update as Record<string, unknown>)
+      .filter((s) => s?.tool_name === 'run_command')
+    // eslint-disable-next-line no-console
+    console.log(
+      '[L7]',
+      JSON.stringify(
+        {
+          code,
+          hook_invocations: calls,
+          run_command_steps: steps.length,
+          states: steps.map((s) => s?.state),
+          errors: steps.map((s) => (s?.tool_info as Record<string, unknown> | undefined)?.error ?? null),
+        },
+        null,
+        1,
+      ),
+    )
+    expect(events.length).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * 0.2.0 (PR2–PR5): the gate is the sole approval authority and agy's own
+ * engine is off (`--dangerously-skip-permissions`, M3). These
+ * pin the three facts that flag rests on, against the real agy.
+ */
+live('L4b — 0.2.0 gate authority under --dangerously-skip-permissions', () => {
+  async function runJob(input: Record<string, unknown>, test: string) {
+    const { createContext } = await import('../../src/server/context.js')
+    const { handleStart } = await import('../../src/server/tools/start.js')
+    const { handleWait } = await import('../../src/server/tools/wait.js')
+    const { handleResult } = await import('../../src/server/tools/result.js')
+    const ctx = createContext()
+    const t0 = Date.now()
+    const started = replyJson(
+      await handleStart(ctx, { model: LIVE_MODEL, effort: LIVE_EFFORT, timeout_ms: LIVE_TIMEOUT_MS, ...input } as never),
+    ) as { job_id: string; effective_config?: { argv?: string[] } }
+    const waited = replyJson(
+      await handleWait(ctx, { job_id: started.job_id, wait_ms: LIVE_TIMEOUT_MS } as never),
+    ) as { lifecycle: string; outcome: string }
+    const events = readEvents(ctx, started.job_id)
+    recordUsage({ test, job_id: started.job_id, model: LIVE_MODEL, events, wall_ms: Date.now() - t0 })
+    const full = replyJson(await handleResult(ctx, { job_id: started.job_id, section: 'verification' } as never)) as {
+      verification?: { blockers?: Array<{ source: string; tool?: string | null }> }
+    }
+    const { jobPaths, readJsonIfExists } = await import('../../src/contract/paths.js')
+    const effectiveConfig = readJsonIfExists<{ argv: string[] }>(
+      jobPaths(ctx.paths, started.job_id).effectiveConfig,
+    )
+    return { ctx, started, waited, events, full, argv: effectiveConfig?.argv ?? [] }
+  }
+
+  it('argv carries the flag, and no agy_engine blocker appears on a current job', async () => {
+    writeWorkspaceFile(project, 'note.txt', 'hello from the workspace\n')
+    const { waited, full, argv } = await runJob(
+      { prompt: 'View the file note.txt in the workspace and tell me its first word.', profile: 'research_readonly' },
+      'L4b-view-inside',
+    )
+    expect(waited.lifecycle).toBe('finished')
+    expect(argv).toContain('--dangerously-skip-permissions')
+    const blockers = full.verification?.blockers ?? []
+    expect(blockers.filter((b) => b.source === 'agy_engine')).toHaveLength(0)
+    // research_readonly allows view_file inside the workspace (finding 12 resolved in PR2).
+    expect(blockers.filter((b) => b.source === 'gate' && b.tool === 'view_file')).toHaveLength(0)
+  })
+
+  it('research_readonly denies view_file outside the workspace and subagent tools', async () => {
+    const { waited, full } = await runJob(
+      {
+        prompt:
+          'First, view the file /etc/hosts with the file viewer tool. Then define a subagent named runner and invoke it to run `echo hi`. Report what happened at each step.',
+        profile: 'research_readonly',
+      },
+      'L4b-outside-and-subagent',
+    )
+    expect(waited.lifecycle).toBe('finished')
+    const gate = (full.verification?.blockers ?? []).filter((b) => b.source === 'gate')
+    expect(gate.length).toBeGreaterThan(0)
+    expect(waited.outcome).toBe('blocked')
+  })
+
+  it('with an empty ceiling an allowed command still runs sandboxed: ~/.jdks is not permitted', async () => {
+    // research_readonly, not general_worker: `command(ls)` is on the read-only
+    // profile's allow list and not on the worker's (measured on the first
+    // run of this test — general_worker denied `ls` at the gate's default
+    // stage, which proves I1 but says nothing about the sandbox). The gate's
+    // containment only checks Cwd for run_command, so the command reaches the
+    // OS sandbox, which is what this test is about (M3-A).
+    const { waited, full, events } = await runJob(
+      { prompt: 'Run exactly this command and report its output verbatim: ls ~/.jdks', profile: 'research_readonly' },
+      'L4b-sandboxed',
+    )
+    expect(waited.lifecycle).toBe('finished')
+    const outputs = events
+      .map((e) => JSON.stringify(e))
+      .filter((s) => s.includes('Operation not permitted'))
+    expect(outputs.length).toBeGreaterThan(0)
+    const blockers = full.verification?.blockers ?? []
+    expect(blockers.filter((b) => b.source === 'agy_engine')).toHaveLength(0)
+    // Our gate allowed the command (it is on the ceiling); the OS sandbox is
+    // what refused, so the only blocker may be a Class 2 `sandbox` entry.
+    expect(blockers.filter((b) => b.source === 'gate')).toHaveLength(0)
+  })
+})

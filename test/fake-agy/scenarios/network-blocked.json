@@ -1,0 +1,45 @@
+{
+  "name": "network-blocked",
+  "description": "A run_command step whose output carries a Class 2 environment-block signature (see docs/permissions.md) — the sandbox blocks DNS resolution silently. No hook fires, exit stays 0, result.status stays SUCCESS: only the ordinary tool output reveals the block. The command must be one the gate actually lets through, otherwise the step becomes a Class 1 denial and the scripted output is never emitted — `curl` is in HARD_DENY, and PR2 (0.2.0) removed general_worker's default_decision:'ask' fallback, so anything outside the profile's own allow ceiling is denied too. `npm run fetch-remote` sits inside `command(npm run)` (extra trailing tokens are unconstrained). Used to test events/detect.ts scanDenials() and that verified_success is withheld.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        {
+          "type": "agent_response",
+          "chunks": [],
+          "duration_seconds": 0.9,
+          "usage": [
+            16000,
+            60
+          ]
+        },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": {
+            "CommandLine": "npm run fetch-remote"
+          },
+          "tool_action": "Fetching a remote resource",
+          "tool_summary": "npm run fetch-remote",
+          "output": "npm ERR! request to https://example.invalid/ failed, reason: Could not resolve host: example.invalid\n",
+          "duration_seconds": 0.11
+        },
+        {
+          "type": "agent_response",
+          "chunks": [
+            "The npm run fetch-remote command failed with a DNS resolution error, so I could not reach the remote."
+          ],
+          "duration_seconds": 1.1,
+          "usage": [
+            16100,
+            40
+          ]
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "The npm run fetch-remote command failed with a DNS resolution error, so I could not reach the remote.",
+      "duration_seconds": 2.2
+    }
+  ]
+}

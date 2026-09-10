@@ -1,0 +1,31 @@
+{
+  "name": "slow",
+  "description": "A long-running turn (delay_ms before and after the tool call), for tests that need a job to still be 'running' when they check on it: lock conflicts, agy_wait polling with a real state change, cancel, and timeout. The real-time delay comes entirely from `delay_ms` (agy.mjs sleeps before ever invoking the hook), so CommandLine itself does not need to actually sleep — it is `git status` so the step is also gate-allowed under both shipped profiles (0.2.0: PR2 denies anything unmatched).",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.2, "delay_ms": 400 },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "git status" },
+          "tool_action": "Simulating slow work",
+          "tool_summary": "git status",
+          "output": "On branch main\nnothing to commit, working tree clean\n",
+          "duration_seconds": 1.0,
+          "delay_ms": 1500
+        },
+        {
+          "type": "agent_response",
+          "chunks": ["Finished the slow task."],
+          "duration_seconds": 0.2,
+          "delay_ms": 400
+        }
+      ],
+      "status": "SUCCESS",
+      "response": "Finished the slow task.",
+      "duration_seconds": 2.3
+    }
+  ]
+}

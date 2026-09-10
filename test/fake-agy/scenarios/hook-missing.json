@@ -1,0 +1,25 @@
+{
+  "name": "hook-missing",
+  "description": "Same single-tool shape as happy.json, but meant to be run with AGY_FAKE_SKIP_HOOKS=1 (README.md) so <ws>/.agents/hooks.json is never loaded even though --add-dir is present — reproduces 'hooks.json failed to load' for PR3's runtime gate-confirmation watchdog (I4), without needing a genuinely broken hooks.json on disk.",
+  "model": "gemini-3.7-flash-low",
+  "turns": [
+    {
+      "steps": [
+        { "type": "agent_response", "chunks": [], "duration_seconds": 0.9, "usage": [16000, 60] },
+        {
+          "type": "tool",
+          "tool_name": "run_command",
+          "parameters": { "CommandLine": "echo hi" },
+          "tool_action": "Echo",
+          "tool_summary": "echo hi",
+          "output": "hi\n",
+          "duration_seconds": 0.05
+        },
+        { "type": "agent_response", "chunks": ["hi"], "duration_seconds": 0.9, "usage": [16060, 10] }
+      ],
+      "status": "SUCCESS",
+      "response": "hi",
+      "duration_seconds": 2.0
+    }
+  ]
+}
