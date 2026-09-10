@@ -63,38 +63,58 @@ separate from `agy`'s self-report (`agent_report`). Read `outcome` and
 
 ```bash
 npm install -g agy-worker-mcp
+agy-worker-setup
 ```
 
-That puts `agy-worker-mcp`, `agy-worker-setup` and the two helper binaries
-(`agy-worker-runner`, `agy-worker-gate`) on your `PATH`. To run the setup
-command once without a global install: `npx -y -p agy-worker-mcp agy-worker-setup`.
+`npm install -g` puts `agy-worker-mcp`, `agy-worker-setup` and the two helper
+binaries (`agy-worker-runner`, `agy-worker-gate`) on your `PATH`.
+`agy-worker-setup` then does the two things npm cannot:
 
-Register it — Claude Code, project-scoped, which is easy to undo and affects
-nothing else:
+1. writes a **stable launcher** at `~/.agy-worker/bin/agy-worker-mcp` that
+   finds Node and this server itself at spawn time, and
+2. copies the `agy-ceiling` skill and the `/agy-ceiling` slash command into
+   `~/.claude/` and `~/.codex/` (user scope by default; `--scope project` puts
+   them in `./.claude/` instead).
+
+It never writes a client's config file, never overwrites an existing file
+without `--force`, and `--dry-run` prints the plan. `--link` symlinks instead
+of copying, so a package upgrade is picked up without re-running it.
+`--client claude|codex|all` narrows what it touches.
+
+### Why the launcher
+
+A GUI-launched client does not run your shell profile. It gets launchd's
+`PATH` — `/usr/bin:/bin:/usr/sbin:/sbin` — where `node` does not exist if you
+installed it with `fnm`, `nvm`, `volta`, `asdf` or `mise`. Registering the
+command as `agy-worker-mcp` then works in a terminal and fails silently in the
+app.
+
+The launcher is a plain `sh` script with no dependency on `PATH`: it records
+the Node and server paths that were live at install time, checks them, and
+falls back to the newest version each common version manager has on disk. Point
+your client at it rather than at a bare command:
 
 ```bash
-claude mcp add agy --scope project -- agy-worker-mcp
+claude mcp add agy --scope user -- ~/.agy-worker/bin/agy-worker-mcp
 ```
-
-Then, in the project where you use it, drop in the Claude Code pieces (the
-`agy-ceiling` skill and the `/agy-ceiling` slash command — npm cannot put
-files into `.claude/` for you, and this package refuses to write there
-unasked):
-
-```bash
-agy-worker-setup                # → ./.claude/skills, ./.claude/commands
-agy-worker-setup --scope user   # → ~/.claude/…, once for every project
-```
-
-It never overwrites an existing file unless you pass `--force`, and `--dry-run`
-shows the plan.
-
-Codex (`~/.codex/config.toml`):
 
 ```toml
+# ~/.codex/config.toml
 [mcp_servers.agy]
-command = "agy-worker-mcp"
+command = "/Users/you/.agy-worker/bin/agy-worker-mcp"
 ```
+
+`agy-worker-setup` prints both lines, filled in for your machine.
+
+### When something is wrong
+
+```bash
+agy-worker-setup --doctor
+```
+
+checks the launcher, the Node it resolves, whether `agy` is reachable and from
+where, and what each client's config actually points at — which is usually the
+answer when a server "does not start" with no error anywhere.
 
 <details>
 <summary>From GitHub or a clone instead</summary>
@@ -120,12 +140,13 @@ re-run `npm run build` after editing `src/`.
 </details>
 
 Check the registration with `claude mcp list`, and remove it with
-`claude mcp remove agy --scope project`.
+`claude mcp remove agy --scope user`.
 
 The server discovers the project root by walking up from its `cwd` to a git
-root, or honors `AGY_WORKER_PROJECT` as an override. Per-project state lives
-under `~/.agy-worker/projects/<hash>/` — never inside your repository, so
-nothing here needs a `.gitignore` entry.
+root — a linked worktree resolves to the repository it belongs to, so every
+worktree of one repository shares one ceiling, one lock domain and one database
+— or honors `AGY_WORKER_PROJECT` as an override. Per-project state lives under
+`~/.agy-worker/projects/<hash>/`, never inside your repository.
 
 ## Quick start
 
@@ -180,9 +201,46 @@ a human editing `policy.json`, or a different command.
 | `agy_sessions` | List, inspect, or close `agy` conversations. |
 | `agy_capabilities` | Models, profiles, the project ceiling as loaded, limits, discovered project root, server version. |
 | `agy_ceiling` | Read-only: the ceiling, the effective policy, denial history, and a review of a draft ceiling. Never writes. |
+| `agy_release_workspace` | Remove a finished worktree job's worktree and delete its branch, once you have merged it. |
 
 Parameter-level detail, the `outcome` vocabulary, and the two "blocked" classes
 are in [`docs/tools.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/tools.md).
+
+## Worktree isolation
+
+```
+agy_start { isolation: "worktree", prompt, profile: "general_worker" }
+```
+
+puts the job in a fresh git worktree at `<root>/.worktrees/agy-<job_id>`, on
+branch `agy/<job_id>`. Two jobs on one repository stop fighting over one tree,
+and you can read a job's work before deciding to take it.
+
+The job **cannot commit** — the ceiling denies `git add` and `git commit` — so
+the branch is a proposal, not a fact. You merge it:
+
+```bash
+git merge --squash agy/<job_id>
+agy_release_workspace { job_id }        # removes the worktree, deletes the branch
+```
+
+A fresh worktree has no `node_modules`, so a JavaScript project's tests fail on
+the first call. List what to link in the project ceiling:
+
+```json
+{ "version": 2, "link_paths": ["node_modules"] }
+```
+
+The server symlinks those in and widens the job's **read** roots to the real
+directory behind each link — writes through the link stay denied, so one job
+cannot corrupt what every other worktree and your own tree share. It is a
+ceiling key with no request field: a link is a read-root widening, and that is
+yours to decide.
+
+`agy_capabilities.worktrees` lists worktrees still on disk. `on_finish:
+"remove"` cleans up automatically, but only when the worktree is clean — the
+default is `keep`, because deleting an unmerged worktree destroys the job's
+entire output.
 
 ## Permissions
 

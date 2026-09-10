@@ -21,6 +21,16 @@ Four layers say "no" to a job, and each has exactly one key that opens it
 | Profile deny (`git push`, `curl`, `wget`, `ssh`, `scp`, `sudo`, `docker`, `rm -rf`, `git reset --hard`, `npm install`, …) | `exceptions` — exact rule string |
 | Not on the allow list (`cargo build`, `make`, `go test`, …) | `allow`, or `command_policy: "denylist"` |
 | Reads outside the workspace | `read_roots` |
+| Writes outside the workspace | `write_roots` |
+
+Two more keys are not "no" at all — they change what a job *is* rather than
+what it may do, and neither belongs in a draft unless the project actually
+needs it:
+
+| Key | What it does |
+| --- | --- |
+| `link_paths` | Project-root-relative directories (`node_modules`, `.venv`, `build`) the server symlinks into an `isolation: "worktree"` job. Reads through the link are allowed; writes are not. Without it, a fresh worktree has no dependencies and every test command fails. |
+| `max_running_jobs` | How many jobs this project may have live at once. Default 3, hard cap 12. |
 
 No ceiling file means the profile as shipped. That is the safe default; the
 ceiling is where a human says "this project may do more".

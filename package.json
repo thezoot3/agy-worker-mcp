@@ -1,6 +1,6 @@
 {
   "name": "agy-worker-mcp",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Unofficial MCP server that drives Google's Antigravity CLI (agy) as an asynchronous worker agent",
   "type": "module",
   "license": "MIT",

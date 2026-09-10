@@ -19,14 +19,14 @@ redirected to files in the job directory.
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `prompt` | string, required | — | The task. Passed as `--print=<prompt>`; in `session_mode: "session"` it is seeded as turn 1 on stdin instead, because `agy` refuses both at once. |
-| `cwd` | string | project root | Workspace. Must resolve inside the project root, symlinks included. |
+| `cwd` | string | project root | Workspace. Must resolve inside the project root, symlinks included. Must be the project root itself when `isolation: "worktree"`. |
 | `profile` | `research_readonly` \| `general_worker` | `research_readonly` | Permission ceiling. See [`permissions.md`](./permissions.md). |
 | `model` | string | agy's default | e.g. `gemini-3.7-flash-low`. `agy_capabilities` lists the models actually observed. |
 | `effort` | `low` \| `medium` \| `high` | agy's default | |
 | `mode` | string | agy's default | agy execution mode, e.g. `accept-edits`. |
 | `session_id` | string | new session | Continue an existing conversation. Resume is lossless (measured). |
 | `session_mode` | `oneshot` \| `session` | `oneshot` | `oneshot` closes stdin after one turn; `session` keeps it open for `agy_send`. |
-| `permissions` | `{ allow?, deny?, sandbox?, read_roots? }` | profile ceiling | Narrowing only, within the three-owner model (code / project ceiling / this field) — see [`permissions.md`](./permissions.md). `allow` is intersected with the ceiling, `deny` is unioned, `sandbox` (`"seatbelt"` \| `"agy"`) raises the OS boundary for this job and never lowers it — `"agy"` on agy 1.1.24 means no in-workspace shell writes, so builds and `git commit` fail; the pre-0.3.0 boolean `sandboxed: true` is still read as `"agy"` — and `read_roots` (extra `--add-dir` roots) applies the project ceiling's entries by default; list entries here only to use a subset of them (entries outside the ceiling are dropped and reported in `rejected_read_roots`). |
+| `permissions` | `{ allow?, deny?, sandbox?, read_roots? }` | profile ceiling | Narrowing only, within the three-owner model (code / project ceiling / this field) — see [`permissions.md`](./permissions.md). `allow` is intersected with the ceiling, `deny` is unioned, `sandbox` (`"seatbelt"` \| `"agy"`) raises the OS boundary for this job and never lowers it — `"agy"` on agy 1.1.24 means no in-workspace shell writes, so builds and `git commit` fail — and `read_roots` (extra `--add-dir` roots) applies the project ceiling's entries by default; list entries here only to use a subset of them (entries outside the ceiling are dropped and reported in `rejected_read_roots`). The object is strict: an unknown key is an error, including the removed `sandboxed` (write `sandbox: "agy"` instead). |
 | `on_denial` | `abort` \| `continue` \| `guide` | `continue` | What to do at the first policy denial. |
 | `max_denials` | int | none | Abort after this many gate denials regardless of `on_denial`. The middle ground between `abort` (one flaky-tool retry ends the job) and `continue` (unbounded). An `unsupported` tool call (anything but a subagent tool) no longer triggers `abort` on its own. |
 | `timeout_ms` | int | 15 min | Clamped to 1 h. Becomes `deadline_at`; the runner kills the whole process group when it passes. |
@@ -35,12 +35,17 @@ redirected to files in the job directory.
 | `json_schema` | string | — | Path to a JSON schema for structured output. Must be inside the project root. |
 | `verify_command` | string | — | A command the *runner* — not agy — runs once, after agy exits normally, against the final workspace state. Not sandboxed, not a security boundary: it runs as the user, at the same trust level as the parent agent running the command itself. A non-zero exit or a `verify_timeout_ms` timeout makes `outcome` `"failed"`, never a blocker. See [`permissions.md`](./permissions.md#verify_command). |
 | `verify_timeout_ms` | int | 10 min | Independent of `timeout_ms`/`deadline_at` — `verify_command` may run past the job's own deadline. Clamped to `limits.max_timeout_ms`. Ignored without `verify_command`. |
+| `isolation` | `in_place` \| `worktree` | `in_place` | `worktree` runs the job in a fresh git worktree at `<root>/.worktrees/agy-<job_id>` on branch `agy/<job_id>`. The job cannot commit; the caller merges. The ceiling's `link_paths` are symlinked in, read-only. |
+| `base_ref` | string | `HEAD` | `isolation: "worktree"` only. What to branch from. A bad ref fails before anything is created. |
+| `on_finish` | `keep` \| `remove` | `keep` | `isolation: "worktree"` only. `remove` deletes the worktree and branch when the job finishes — but only if nothing is uncommitted in it. A dirty worktree is kept and says so in the warnings. |
 | `requested_by`, `parent_task_id` | string | — | Free-form attribution, echoed back by `agy_list_jobs`. |
 | `dry_run` | boolean | `false` | Resolve config, argv, and policy — including the ceiling's rejections — without spawning `agy`. Costs no quota. |
 | `expected_commands` | string[] | — | `dry_run` only: shell commands to evaluate against the effective policy. Returned in `preflight.commands` with allow/deny decisions. |
 
-Returns `{ job_id, session_id, lifecycle: "queued", profile, cwd, session_mode, deadline_at, idle_timeout_ms }`,
-or `{ dry_run: true, effective_config, preflight? }` when `dry_run` is set.
+Returns `{ job_id, session_id, lifecycle: "queued", profile, cwd, session_mode, deadline_at, idle_timeout_ms, workspace }`,
+or `{ dry_run: true, effective_config, preflight?, workspace }` when `dry_run` is
+set. `workspace` is the block described under `agy_result` below; on a `dry_run`
+it describes the worktree that *would* be created, and nothing is written.
 
 Both replies also carry, in the same vocabulary a finished job is judged in:
 
@@ -121,6 +126,18 @@ an error while the job is still live.
   as prose, plus observations that are not blockers, such as "this session
   was closed by its idle timeout, resume with `agy_start({ session_id })`".
 - `response` — the agent's text, paged.
+
+The `summary` section also carries `workspace` — where the job's changes
+actually are, and what still has to happen to them:
+
+| Field | Notes |
+| --- | --- |
+| `kind` | `"in_place"` or `"worktree"`. |
+| `path` | The workspace itself. |
+| `branch` | The job's branch, or `null` for `in_place`. |
+| `base_commit`, `head_commit` | What the worktree branched from, and where it ended. Equal unless something committed. |
+| `committed` | Always `false`. A job has no permission to commit its own work, so the caller merges. |
+| `changed_file_count` | Length of `verification.changed_files` — our own `.agents/` and `.worktrees/` housekeeping already filtered out. |
 
 `verification.verify` — `null` when no `verify_command` was configured (or
 the job's own deadline killed agy first, skipping verify entirely).
@@ -203,7 +220,7 @@ their `write` / `bypass_sandbox` shape, the project's own permission
 version, the schema version, and whether the `agy` binary is reachable on
 `PATH` (checked without ever spawning it).
 
-`ceiling` — `{ path, present, version, allow, deny, exceptions, sandbox, read_roots, write_roots, command_policy, warnings }`,
+`ceiling` — `{ path, present, version, allow, deny, exceptions, sandbox, read_roots, write_roots, link_paths, command_policy, max_running_jobs, warnings }`,
 loaded from `<project state dir>/policy.json` (see
 [`permissions.md`](./permissions.md#the-project-ceiling-file)). `present:
 false` means no ceiling file exists yet — every field then reads as empty,
@@ -219,6 +236,23 @@ per-job `agy_start` call substitutes it into the real workspace path in its
 own `policy_summary`. An invalid ceiling file fails this call the same way
 it fails `agy_start` — never silently hidden behind an empty `ceiling`.
 
+`limits.max_running_jobs` is the number a start would actually enforce — the
+ceiling's `max_running_jobs` when it sets one, the server default otherwise —
+and `limits_source.max_running_jobs` says which, so a caller reading the number
+can tell whether raising it is a one-line ceiling edit or a server change.
+
+`worktrees` — `{ count, paths }`, present only when job worktrees exist under
+`<root>/.worktrees/`. `on_finish: "keep"` is the default, so a caller who never
+calls `agy_release_workspace` accumulates them, and this is the only place they
+are ever reported. The list comes from git's own worktree list, not the job
+table, so one whose job directory was cleaned up weeks ago still appears.
+
+`project_root_source` says how the root was found: `"env"`
+(`AGY_WORKER_PROJECT`), `"git"`, `"git-worktree"` (a linked worktree, resolved
+to the repository it belongs to — `project_root_moved_from` carries the
+worktree path), `"git-submodule"` (its own project, which is what a submodule
+is), or `"cwd"` (no git anywhere, which comes with a warning).
+
 It also reports `client` — the name, version, and declared capabilities of the
 MCP client on the other end of this connection, taken from the `initialize`
 handshake. That is where to look before assuming an optional protocol feature
@@ -227,6 +261,26 @@ handed back as a background task rather than held open. Measured: Codex
 0.150.1 declares `elicitation` only, no `tasks`.
 
 Call this first when a client's project root is in doubt.
+
+## `agy_release_workspace`
+
+Removes a finished worktree job's worktree and deletes its branch, after you
+merged it (or decided not to).
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `job_id` | string, required | |
+| `force` | boolean | Remove even with uncommitted changes in the worktree. |
+
+Refuses a live job, refuses a job that ran `in_place`, and refuses a worktree
+with uncommitted changes unless `force` is set — including the case where git
+declines to report its status at all, which is treated as dirty rather than
+clean. Idempotent: a worktree that is already gone returns `removed: false`
+rather than an error.
+
+Nothing calls this for you. `on_finish: "remove"` handles the case where you
+know in advance that you will not want the tree; otherwise worktrees stay until
+released, and `agy_capabilities.worktrees` reports the ones still on disk.
 
 ## `agy_ceiling`
 

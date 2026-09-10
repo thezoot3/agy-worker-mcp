@@ -4,6 +4,143 @@ All notable changes to agy-worker-mcp. Dates are the day the version landed on
 `main`. Measurements against the real `agy` CLI are noted with the agy version
 they were taken on.
 
+## 0.4.0 — 2026-09-11
+
+The release that makes installing it and running the first job boring, and gives
+a job somewhere of its own to work.
+
+**Breaking.** Version 1 ceiling files are rejected, and the legacy
+`permissions.sandboxed` request field is gone. Both have a one-command fix; see
+the first two entries.
+
+### Breaking
+
+- **`policy.json` must be `version: 2`.** A version 1 file no longer loads, and
+  no job starts against one. The refusal carries the whole conversion:
+  `agy_ceiling()` returns `v1_migration` with the exact version 2 equivalent
+  (same permissions, nothing widened) and the single `cat > … <<'JSON'` command
+  that writes it. 0.3.3 shipped that migration helper so this could be done
+  before upgrading rather than after. The server still has no code path that
+  writes the ceiling.
+- **`permissions.sandboxed` was removed.** Write `permissions.sandbox: "agy"`
+  (or `"seatbelt"`). The `permissions` object is now strict, so the old
+  spelling is rejected rather than dropped — a silently stripped
+  `sandboxed: true` gave the job *less* sandboxing than the caller asked for,
+  which is the one way for a permissions typo to be dangerous rather than
+  merely annoying.
+
+### Isolation
+
+- **`agy_start({ isolation: 'worktree' })`** puts the job in its own git
+  worktree at `<root>/.worktrees/agy-<job_id>`, on branch `agy/<job_id>`
+  (`base_ref` to branch from something other than HEAD). Two jobs on one
+  repository stop fighting over one tree, and a caller can look at a job's work
+  without having already inherited it. The job still cannot commit — the
+  ceiling denies `git add` and `git commit` — so the caller merges. That is the
+  same rule as the `.agents` lockdown: no job promotes its own result.
+- **Ceiling key `link_paths`.** A fresh worktree has no `node_modules`, so
+  every test command in a JavaScript project fails on the first call. The
+  server symlinks the listed project-root-relative directories in — and, because
+  `canonicalize()` resolves symlinks, teaches containment and the allow list
+  about the real directory behind the link. Reads through the link are allowed;
+  writes are not, so one worktree job cannot corrupt what every other worktree
+  and the user's own tree share. It is ceiling-only, with no request field: a
+  link widens what an unattended job can read, and that is a human's call.
+- **The handoff is reported, not remembered.** A `workspace` block — kind,
+  path, branch, base and head commit, `committed: false`, changed-file count —
+  rides along on `agy_start`'s reply, in `broker-result.json` (now version 4,
+  with older files migrating as `in_place`), and in `agy_result`'s summary. A
+  worktree job's headline ends by saying where its changes are and who merges
+  them. `agy_wait`'s judgement packet is deliberately untouched: where the
+  changes live is not a verdict.
+- **`agy_release_workspace`** — the eleventh tool. Removes a finished job's
+  worktree and deletes its branch once you have merged it. Refuses a live job,
+  an `in_place` job, and a dirty worktree without `force` — including the case
+  where git will not report a status at all, which counts as dirty.
+  `on_finish: 'remove'` does the same automatically for a job you already know
+  you will not want the tree from; `keep` stays the default, because deleting an
+  unmerged worktree destroys the job's whole output.
+  `agy_capabilities.worktrees` lists whatever is still on disk, read from git's
+  own worktree list so one whose job directory was cleaned up still shows up.
+- **`command(git worktree)` is denied** for `general_worker`. A job that can add
+  or remove worktrees can move its own workspace out from under the gate.
+- **A linked worktree resolves to its main repository.** `.git` as a *file*
+  used to make each worktree its own project — its own ceiling, its own lock
+  domain, its own database. `agy_capabilities` reports
+  `project_root_source: "git-worktree"` and the path it moved from. Submodules
+  stay their own project, which is what they are.
+
+### Install and first run
+
+- **A stable launcher at `~/.agy-worker/bin/agy-worker-mcp`.** A GUI-launched
+  client does not run your shell profile; it gets launchd's `PATH`, where a
+  version-manager Node does not exist. Registering `agy-worker-mcp` as a bare
+  command therefore worked in a terminal and failed silently in the app. The
+  launcher is plain `sh` with no `PATH` dependency: it records the Node and
+  server paths from install time, checks them, and falls back to the newest
+  version each common version manager has on disk.
+- **`agy-worker-setup` grew up** — `--client claude|codex|all`, user scope by
+  default, `--link` to symlink instead of copy so upgrades are picked up, and
+  `--doctor`, which checks the launcher, the Node it resolves, whether `agy` is
+  reachable and from where, and what each client's config actually points at.
+  It still never writes a client config file.
+- **The gate hook records `process.execPath`**, not `node`. The hook file is
+  written by this server and read by an `agy` the client spawned; the two do not
+  share a `PATH`.
+- **`.agents/hooks.json` and `.worktrees/` are added to `.git/info/exclude`**
+  on the first job, so the tree we write into does not dirty the user's
+  `git status` and does not touch their `.gitignore`. `changed_files` filters
+  both out too — a job that changed nothing used to report our own housekeeping
+  as its work.
+- **A degenerate project root is reported, not run.** `/`, the home directory,
+  or a root resolved from `cwd` with no git anywhere now come back as
+  `agy_capabilities.warnings` naming `AGY_WORKER_PROJECT`.
+- **`agy_capabilities` survives a missing `agy`.** Reporting that the binary is
+  not installed is one of the things that call exists for; it used to fail
+  outright instead, hiding profiles and limits at the moment they were most
+  needed.
+
+### Gate
+
+- **Heredocs are parsed, not split.** `cat <<'EOF' > file` used to have its body
+  chopped into lines and judged as commands, so a body containing the word
+  `curl` was a denial and a perfectly ordinary file write was impossible. The
+  body is data now. The redirect target still gets full containment: writing to
+  `.agents/hooks.json`, outside the workspace, or through `..` is refused
+  exactly as before, and an unterminated heredoc is still an error.
+- **Allow-list gaps closed** — `pwd`, `tee`, `pytest`, and `node <script>` /
+  `python3 <script>` for a script path inside the workspace. `npx` stays out;
+  it is an install and network path, and belongs in a project's own ceiling.
+- **Interpreter preload flags are refused** — `node --require=/tmp/x`,
+  `python3 -X importtime /tmp/x` and their kin, which slipped past the script
+  path check.
+- **The workspace is never guessed.** The interpreter rules used to fall back to
+  `process.cwd()` when no workspace was passed — a security boundary from a
+  default. It fails closed now, and every call site passes the real workspace.
+
+### Concurrency and reporting
+
+- **Ceiling key `max_running_jobs`**, default 3, hard cap 12. A number above
+  the cap fails the file closed rather than being clamped: a ceiling that says
+  forty while the server runs twelve only ever surfaces as an unexplained lock
+  conflict. `LOCK_CONFLICT`'s remedy now names the key and the file, and
+  `agy_capabilities.limits_source` says whether the effective number came from
+  the ceiling or the default.
+- **A stream interruption is classified.** agy sometimes reports
+  `status: ERROR` with "The stream was interrupted" after a complete response.
+  The outcome stays `failed` — agy's self-report is never the basis for a
+  verdict — but the warning now says it is the retryable kind, so a caller can
+  decide instead of guessing.
+
+### Release
+
+- **CI stages; a human publishes.** The release workflow runs
+  `npm stage publish --provenance` and stops. Nothing reaches the registry until
+  someone approves it with interactive 2FA. OIDC trusted publishing removed the
+  long-lived token but made the workflow file itself a publishing credential,
+  and this package spawns agents on a user's machine with
+  `--dangerously-skip-permissions` — that is worth one approval per release.
+
 ## 0.3.3 — 2026-09-10
 
 A deprecation notice with its own remedy. No behaviour changes.

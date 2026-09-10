@@ -47,9 +47,9 @@ Two profiles ship (`research_readonly`, `general_worker`); read their live allow
 
 ## The project ceiling file
 
-Version 2 since 0.3.0. A `version: 1` file (`extra_allow` / `extra_deny` / `additional_dirs`) is still read and converted, with a warning in `agy_capabilities.ceiling.warnings` naming the renames; it is **rejected** in 0.4.0 — a job will not start against a version 1 file. `agy_ceiling()` returns `v1_migration` with the version 2 equivalent and the one command that writes it; convert before upgrading.
+Version 2 only, since 0.4.0. A `version: 1` file (`extra_allow` / `extra_deny` / `additional_dirs` / `sandboxed`) is **rejected**: no job starts against one, and the refusal is the whole conversion — `agy_ceiling()` returns `v1_migration` with the version 2 equivalent and the single `cat > … <<'JSON'` command that writes it. The server never writes the file itself; that is a human's decision, in every version.
 
-`<state home>/projects/<sha256(canonical_root)[:16]>/policy.json`. Missing file → empty ceiling (narrower, not wider, than having one). Present but invalid — bad JSON, wrong `version`, an unparsable rule, an `exceptions` entry naming a `HARD_DENY` rule, or a legacy `unsandboxed` key — and `agy_start` fails closed with a `ValidationError` naming the file.
+`<state home>/projects/<sha256(canonical_root)[:16]>/policy.json`. Missing file → empty ceiling (narrower, not wider, than having one). Present but invalid — bad JSON, `version: 1`, an unparsable rule, an `exceptions` entry naming a `HARD_DENY` rule, a legacy `sandboxed` key, or a `max_running_jobs` above the server cap — and `agy_start` fails closed with a `ValidationError` naming the file.
 
 ```json
 {
@@ -60,16 +60,18 @@ Version 2 since 0.3.0. A `version: 1` file (`extra_allow` / `extra_deny` / `addi
   "sandbox": "none",
   "write_roots": [],
   "read_roots": ["~/.jdks", "~/.gradle"],
-  "command_policy": "allowlist"
+  "command_policy": "allowlist",
+  "max_running_jobs": 3
 }
 ```
 
 - `allow` / `deny` — added to the profile's own allow/deny.
 - `exceptions` — profile deny rules this project lifts, matched by exact string (`command(git)` does not lift `command(git push)`). Cannot name a `HARD_DENY` rule (the file is rejected). Ignored, with a warning, on `research_readonly`. Lifted rules are reported per job in `effective_config.policy.lifted`.
-- `sandbox` — `"none"` (default) \| `"seatbelt"` \| `"agy"`. The OS boundary for every allowed `run_command` on `general_worker`; the strictest of profile / ceiling / request wins. `seatbelt` (macOS, 0.3.0) wraps the command in our own `sandbox-exec` profile that allows everything except file writes outside `write_roots` (plus tmp) — so a write through an allowed interpreter (`python3 -c "open('../x','w')"`) is refused by the kernel, not just unseen by the gate. The gate keeps judging *which* command runs; the seatbelt bounds what it can *touch*. `agy` is agy's own sandbox (the 0.2.0 behaviour; the legacy `sandboxed: true` still reads as this). On agy 1.1.24 that means in-workspace builds, test runs, and `git commit` fail with `Operation not permitted` while code edits through `agy`'s file tools still land — pair it with `verify_command` if you need checks. A `policy.json` that still carries the 0.2.0 `unsandboxed` list fails closed, with a message telling the human to delete the key (and set `sandboxed: true` if they want the sandbox on).
+- `sandbox` — `"none"` (default) \| `"seatbelt"` \| `"agy"`. The OS boundary for every allowed `run_command` on `general_worker`; the strictest of profile / ceiling / request wins. `seatbelt` (macOS, 0.3.0) wraps the command in our own `sandbox-exec` profile that allows everything except file writes outside `write_roots` (plus tmp) — so a write through an allowed interpreter (`python3 -c "open('../x','w')"`) is refused by the kernel, not just unseen by the gate. The gate keeps judging *which* command runs; the seatbelt bounds what it can *touch*. `agy` is agy's own sandbox (the 0.2.0 behaviour). On agy 1.1.24 that means in-workspace builds, test runs, and `git commit` fail with `Operation not permitted` while code edits through `agy`'s file tools still land — pair it with `verify_command` if you need checks. A `policy.json` that still carries a `sandboxed` key fails closed, with a message telling the human to write `"sandbox": "agy"` instead.
 - `read_roots` — extra `--add-dir` roots, read/exec only.
 - `write_roots` — directories outside the workspace jobs may write to (plain directories, no globs). Widens containment for the file tools and the seatbelt profile alike; the usual entries are build caches (`~/.gradle`, `~/.npm`, `~/.m2`) a sandboxed build needs. A write root is readable too. Measured (M4): the registered path is opened inside the OS sandbox for **reading and executing**, not just for our own containment — the primary lever for a toolchain outside the workspace, e.g. letting `./gradlew` see `~/.jdks`.
 - `command_policy` — optional `"allowlist" | "denylist"`, default `"allowlist"`. Controls the gate's default decision when a command matches no rule in the allow list.
+- `max_running_jobs` — how many jobs this project may have live at once. Default 3, hard cap 12; a larger number is rejected rather than clamped, because a ceiling that says forty while the server runs twelve only ever surfaces as a lock conflict nobody can explain. Unlike every other key here it does not change what a job may *do* — it is the one number a `LOCK_CONFLICT` remedy points a human at.
 - Globs match exactly or via `*` / `**`; a subdirectory needs `**` (`~/.jdks/**`, not `~/.jdks/*`).
 - `~` expands to home. `{workspace}` is substituted per job for `allow`/`deny`/`exceptions` — the file itself has no workspace, since one project can run jobs against several `cwd`s.
 
@@ -83,7 +85,7 @@ When `command_policy` is set to `"denylist"`, any command that reaches the defau
 | --- | --- |
 | `allow` | Intersected with the ceiling's allow list. |
 | `deny` | Unioned — always adds, never removes. |
-| `sandbox` | `"seatbelt"` \| `"agy"`. Tightening only: raises the OS boundary for this job above what the profile/ceiling set, never lowers it. `sandboxed: true` is the legacy spelling of `"agy"`. Always `agy` on `research_readonly`. |
+| `sandbox` | `"seatbelt"` \| `"agy"`. Tightening only: raises the OS boundary for this job above what the profile/ceiling set, never lowers it. Always `agy` on `research_readonly`. The 0.3.x spelling `sandboxed: true` was removed in 0.4.0 and is now rejected rather than ignored — a silently dropped key would have given the job *less* sandboxing than the caller asked for. |
 | `read_roots` | Narrowing only: the project ceiling's entries apply by default; list entries here only to use a subset of them (non-matching entries are dropped). |
 
 The reply carries `policy_summary` (`{ profile, allow_count, bypass_sandbox, sandbox_forced_by, add_dirs, add_dirs_source }` — `sandbox_forced_by` is `null`, `"profile"`, `"ceiling"`, or `"request"`; `add_dirs_source` is `"ceiling"`, `"request"`, or `"none"`) and `blockers[]` with `source: "policy_ceiling"` per rejected entry. Use `dry_run: true` to see this before spending a turn.
@@ -230,7 +232,7 @@ The other sources:
 - `source: "policy_ceiling"` — the ceiling itself refused; the fix is a human editing `policy.json`, not a different `agy_start`.
 - `source: "agy_engine"` — should not occur since 0.2.0 (agy's own engine is disabled for every job); report it if it does.
 - `source: "sandbox"` — a known OS-sandbox signature (`Operation not permitted`, `Could not resolve host`, …) in a `run_command`'s output, on a job that actually ran sandboxed. Which lever lifts it is whatever forced the sandbox on:
-  - `permissions.sandbox` / `permissions.sandboxed` — retry without it (`actionable: true`).
+  - `permissions.sandbox` — retry without it (`actionable: true`).
   - profile `research_readonly` — use `general_worker` if the task needs to write (`actionable: true`).
   - the ceiling's `sandbox: "agy"` — a human sets it to `"none"` or `"seatbelt"` (`actionable: false`, remedy says so).
   - the ceiling's `sandbox: "seatbelt"` — the message says `seatbelt`; the remedy is a `write_roots` entry for the directory (`actionable: false`), or `actionable: true` when the request asked for the seatbelt.

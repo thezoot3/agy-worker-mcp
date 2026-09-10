@@ -113,11 +113,20 @@ duration.
 | --- | --- | --- |
 | `cwd_write` | canonical workspace | One writing job per workspace. Read-only profiles do not take it. |
 | `session` | session id | One live job per conversation. |
-| running limit | — | 3 live jobs per project by default. |
+| running limit | — | 3 live jobs per project by default; the ceiling's `max_running_jobs` raises or lowers it, up to 12. |
 
 A lost race raises `LOCK_CONFLICT` naming the holder job, its pid, and when the
 lock was acquired. Nothing is silently queued, and a losing `agy_start` leaves
 no rows or directories behind — locks are taken before anything is created.
+
+Hitting the running limit is the one conflict a human can fix rather than wait
+out, so its remedy says which file holds the number: `max_running_jobs` in the
+project ceiling, capped at 12. `agy_capabilities.limits.max_running_jobs`
+reports the effective value and `limits_source` says whether it came from the
+ceiling or the default. Twelve is deliberately below the sixteen concurrent
+jobs measured to still make progress on one machine — the binding constraint is
+not how many agy processes fit but how many detached runners, database handles,
+and watchdog-confirmed gates the rest of the system stays honest under.
 
 A lock held by a process that is gone is reclaimed on reconcile. Process
 identity is checked with an opaque platform start-time token compared against
@@ -140,10 +149,52 @@ The idle timeout is a judgement call, not a measurement: it exists so an
 abandoned session cannot hold its locks indefinitely. It arms only after a
 turn's `result` event, never mid-turn.
 
+## Releasing
+
+The release workflow **stages**; it does not publish. A tag push runs
+`npm stage publish --provenance`, and nothing is on the registry until a human
+approves it:
+
+```sh
+npm stage list
+npm stage view agy-worker-mcp@<version>
+npm stage approve agy-worker-mcp@<version>   # interactive 2FA, always
+npm stage reject agy-worker-mcp@<version>    # throws the staged version away
+```
+
+`npm stage publish` never prompts for 2FA, whatever the token type — that is
+what lets CI run it. `approve` and `reject` always do, and cannot be done with
+an OIDC token or a granular access token at all. The asymmetry is the feature:
+authentication is trusted publishing (OIDC), which makes the workflow file
+itself a publishing credential, and this package spawns agents on a user's
+machine with `--dangerously-skip-permissions`. A compromised repository must
+not be able to reach those machines with no person present.
+
+Provenance is attached at staging, not at approval.
+
+Requirements, all asserted or pinned in the workflow: npm >= 11.15.0, Node
+>= 22.14, and a trusted publisher on npmjs.com that permits stage-publish.
+
+The full sequence:
+
+1. `CHANGELOG.md`, `package.json` version.
+2. `git push origin main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. CI stages. The run summary prints the approve command.
+4. A human approves with 2FA.
+5. The registry takes a few minutes to catch up; `npm view` showing the old
+   version right after approval is not a failure.
+
 ## Retention
 
 `agy_start` opportunistically deletes job directories older than 7 days. There
 is no scheduled cleanup — like everything else here, it happens on a tool call.
+
+A worktree job's tree outlives its job directory unless somebody removes it.
+The same sweep takes a worktree with it **only when git says the tree is
+clean**; a dirty one, or one whose status git will not report, is left where it
+is. Deleting a week-old worktree that still holds unmerged work is far worse
+than leaving a directory on disk, and `agy_capabilities.worktrees` reports
+every one that stays.
 
 ## Tests
 
