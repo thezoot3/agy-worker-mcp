@@ -1,9 +1,8 @@
-> [!WARNING]
-> Under active development (0.3.x). The permission model is a string classifier over
+> **Important — under active development (0.3.x).** The permission model is a string classifier over
 > tool calls — the same kind of boundary Claude Code and Codex use, not a kernel
 > boundary. Allowed shell commands run **without** an OS sandbox by default since 0.2.1
 > (can be enabled with `sandbox: "seatbelt"`). What the gate deliberately does not
-> see is documented in [`docs/permissions.md`](./docs/permissions.md#what-the-gate-deliberately-does-not-see);
+> see is documented in [`docs/permissions.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/permissions.md#what-the-gate-deliberately-does-not-see);
 > read it before starting. Point it only at projects you would let Claude Code work on unattended.
 
 # agy-worker-mcp
@@ -11,7 +10,6 @@
 An MCP server that runs the Google Antigravity CLI (`agy`) as an asynchronous
 worker agent, callable from Claude Code, Codex, and any other MCP client.
 
-> [!NOTE]
 > **Unofficial.** agy-worker-mcp is an independent, third-party MCP server. It is not affiliated with, endorsed by, or supported by Google. "Google", "Antigravity", "Gemini", and the `agy` command name are trademarks or product names of Google LLC and are used here only to identify the CLI this server drives. See [Trademarks and terms](#trademarks-and-terms).
 
 Jobs are detached from the client that started them: a job's process outlives
@@ -30,7 +28,7 @@ kernel boundary back with `sandbox: "seatbelt"`. `agy_ceiling`, the shipped
 `agy-ceiling` skill and the `/agy-ceiling` slash command let an agent or a user
 propose that ceiling from the project's denial history — and nothing writes
 the file without your approval. Version-by-version detail is in
-[`CHANGELOG.md`](./CHANGELOG.md).
+[`CHANGELOG.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/CHANGELOG.md).
 
 ## Why detached jobs
 
@@ -152,7 +150,7 @@ agy_start { profile: "general_worker", permissions: { read_roots: ["~/.jdks"] },
 
 Without the matching ceiling entry, `read_roots` in the request is
 dropped and reported in `rejected_read_roots` — see
-[`docs/permissions.md`](./docs/permissions.md) for the full model.
+[`docs/permissions.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/permissions.md) for the full model.
 
 When a job comes back `blocked`, `agy_result`'s `verification.blockers[]` says
 who refused. Each entry carries `actionable` (can a different `agy_start` lift
@@ -178,7 +176,7 @@ a human editing `policy.json`, or a different command.
 | `agy_ceiling` | Read-only: the ceiling, the effective policy, denial history, and a review of a draft ceiling. Never writes. |
 
 Parameter-level detail, the `outcome` vocabulary, and the two "blocked" classes
-are in [`docs/tools.md`](./docs/tools.md).
+are in [`docs/tools.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/tools.md).
 
 ## Permissions
 
@@ -223,7 +221,7 @@ list to empty and takes the profile's own defaults with it.
 
 Full model — the three owners, the ceiling file schema, the gate's decision
 order, containment, `verify_command`, and denial recovery — is in
-[`docs/permissions.md`](./docs/permissions.md).
+[`docs/permissions.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/permissions.md).
 
 ### Proposing a ceiling (skill)
 
@@ -247,14 +245,14 @@ cp "$(npm root -g)/agy-worker-mcp/commands/agy-ceiling.md" .claude/commands/
 
 ## Documentation
 
-- [`docs/tools.md`](./docs/tools.md) — the ten tools, parameter by parameter,
+- [`docs/tools.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/tools.md) — the ten tools, parameter by parameter,
   and the result vocabulary
-- [`docs/permissions.md`](./docs/permissions.md) — the three-owner permission
+- [`docs/permissions.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/permissions.md) — the three-owner permission
   model, the ceiling file, the gate's decision order, containment,
   `verify_command`, denial recovery
-- [`docs/operations.md`](./docs/operations.md) — state layout, lifecycle, locks,
+- [`docs/operations.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/operations.md) — state layout, lifecycle, locks,
   timeouts, retention, test suites
-- [`CHANGELOG.md`](./CHANGELOG.md) — what changed in each version
+- [`CHANGELOG.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/CHANGELOG.md) — what changed in each version
 
 ## Development
 
@@ -265,7 +263,7 @@ npm run build       # emits dist/server.js, dist/runner.js, dist/gate.js, dist/s
 ```
 
 `npm test` and CI run exclusively against the scripted fake in
-[`test/fake-agy/`](./test/fake-agy); the real `agy` CLI is never invoked there,
+[`test/fake-agy/`](https://github.com/thezoot3/agy-worker-mcp/blob/main/test/fake-agy); the real `agy` CLI is never invoked there,
 since every invocation spends real quota. The real binary is exercised only by
 the opt-in live suite:
 

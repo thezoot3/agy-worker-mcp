@@ -4,6 +4,18 @@ All notable changes to agy-worker-mcp. Dates are the day the version landed on
 `main`. Measurements against the real `agy` CLI are noted with the agy version
 they were taken on.
 
+## 0.3.2 — 2026-09-10
+
+Documentation only. No code changes.
+
+- **README renders on npm** — GitHub alert syntax (`> [!WARNING]`, `> [!NOTE]`)
+  is not supported by npm's markdown renderer and showed up literally on the
+  package page. Both blocks are plain blockquotes with a bold label now, and the
+  development-status block reads "Important" rather than "Warning".
+- **Links work off GitHub** — every relative link in the README (`docs/`,
+  `CHANGELOG.md`, `test/fake-agy`) is an absolute GitHub URL, since npm does not
+  resolve relative links against the repository.
+
 ## 0.3.1 — 2026-09-09
 
 Pre-publish audit. The gate is a string classifier; this release makes it
