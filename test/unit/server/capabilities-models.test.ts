@@ -4,6 +4,7 @@
  * a suffixed name accepts exactly its suffix, `claude-*` accepts nothing,
  * omission is always fine. `agy_start` refuses the rest before spawning.
  */
+import { homedir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { acceptedEfforts, handleCapabilities, MEASURED_MODELS } from '../../../src/server/tools/capabilities.js'
@@ -92,5 +93,52 @@ describe('agy_capabilities handler fields', () => {
     const payload = JSON.parse(rep.content[0]!.text) as Capabilities
     expect(payload.project_root_source).toBe('git-worktree')
     expect(payload.project_root_moved_from).toBe('/path/to/worktree')
+  })
+
+  it('does not warn for an ordinary git repository', async () => {
+    ctx.paths = {
+      ...ctx.paths,
+      root: '/Users/someone/code/my-project',
+      source: 'git',
+    }
+    const rep = await handleCapabilities(ctx, {})
+    const payload = JSON.parse(rep.content[0]!.text) as Capabilities
+    expect(payload.warnings).toEqual([])
+  })
+
+  it('warns for a root that is / and names AGY_WORKER_PROJECT', async () => {
+    ctx.paths = {
+      ...ctx.paths,
+      root: '/',
+      source: 'env',
+    }
+    const rep = await handleCapabilities(ctx, {})
+    const payload = JSON.parse(rep.content[0]!.text) as Capabilities
+    expect(payload.warnings.length).toBeGreaterThan(0)
+    expect(payload.warnings.some((w) => w.includes('root') && w.includes('AGY_WORKER_PROJECT'))).toBe(true)
+  })
+
+  it('warns for a root that is the home directory and names AGY_WORKER_PROJECT', async () => {
+    ctx.paths = {
+      ...ctx.paths,
+      root: homedir(),
+      source: 'git',
+    }
+    const rep = await handleCapabilities(ctx, {})
+    const payload = JSON.parse(rep.content[0]!.text) as Capabilities
+    expect(payload.warnings.length).toBeGreaterThan(0)
+    expect(payload.warnings.some((w) => w.includes('home directory') && w.includes('AGY_WORKER_PROJECT'))).toBe(true)
+  })
+
+  it('warns for a root resolved with source: "cwd" and names AGY_WORKER_PROJECT', async () => {
+    ctx.paths = {
+      ...ctx.paths,
+      root: '/Users/someone/code/plain-dir',
+      source: 'cwd',
+    }
+    const rep = await handleCapabilities(ctx, {})
+    const payload = JSON.parse(rep.content[0]!.text) as Capabilities
+    expect(payload.warnings.length).toBeGreaterThan(0)
+    expect(payload.warnings.some((w) => w.includes('no git root found') && w.includes('AGY_WORKER_PROJECT'))).toBe(true)
   })
 })

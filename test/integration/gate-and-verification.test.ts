@@ -419,7 +419,7 @@ describe('hooks.json entry lifecycle', () => {
     }
   }
 
-  it('agy_start writes our key with a bare "node <gate>" command, no "|| printf" fallback', async () => {
+  it('agy_start writes our key with an absolute "<node> <gate>" command, no "|| printf" fallback', async () => {
     applyEnv(project, 'happy')
     const { createContext } = await import('../../src/server/context.js')
     const { handleStart } = await import('../../src/server/tools/start.js')
@@ -436,7 +436,9 @@ describe('hooks.json entry lifecycle', () => {
     >
     expect(hooks['agy-worker-gate']).toBeDefined()
     const command = hooks['agy-worker-gate']!.PreToolUse[0]!.hooks[0]!.command
-    expect(command.startsWith('node ')).toBe(true)
+    // Absolute node, not the bare word: agy runs this hook with the server's own
+    // PATH, which for a GUI-launched client contains no node at all.
+    expect(command.startsWith(`'${process.execPath}' `)).toBe(true)
     expect(command).not.toContain('||')
     expect(command).not.toContain('printf')
 

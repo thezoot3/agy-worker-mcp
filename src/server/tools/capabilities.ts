@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { homedir } from 'node:os'
+import { delimiter, join, parse as parsePath } from 'node:path'
 import { z } from 'zod'
 
+import { canonicalize } from '../../contract/paths.js'
 import { SCHEMA_VERSION, type Capabilities, type ModelCapability } from '../../contract/types.js'
 import { ceilingPath, describeCeiling, loadCeiling } from '../../policy/ceiling.js'
 import { describeProfiles } from '../../policy/profiles.js'
@@ -107,6 +109,33 @@ export async function handleCapabilities(
     // as it fails `agy_start` — a caller should never see a capabilities
     // reply that quietly hid a broken ceiling file.
     const ceiling = loadCeiling(ctx.paths)
+
+    const warnings: string[] = []
+    const root = ctx.paths.root
+    let home: string
+    try {
+      home = canonicalize(homedir())
+    } catch {
+      home = homedir()
+    }
+    const isRoot = root === '/' || root === parsePath(root).root
+    const isHome = root === home || root === homedir()
+
+    if (isRoot) {
+      warnings.push(
+        `resolved project root is the filesystem root (${root}); jobs cannot run here. Set AGY_WORKER_PROJECT to the target project directory.`,
+      )
+    } else if (isHome) {
+      warnings.push(
+        `resolved project root is the home directory (${root}); jobs cannot run here. Set AGY_WORKER_PROJECT to the target project directory.`,
+      )
+    }
+    if (ctx.paths.source === 'cwd') {
+      warnings.push(
+        `no git root found; resolved project root from current working directory (${root}). Set AGY_WORKER_PROJECT to the target project directory.`,
+      )
+    }
+
     const caps: Capabilities = {
       server_version: ctx.version,
       schema_version: SCHEMA_VERSION,
@@ -128,6 +157,7 @@ export async function handleCapabilities(
       agy_bin_present: agyBin !== null && checkAgyBinPresent(agyBin),
       ...(agyBin === null ? { agy_bin_searched: agySearchLocations() } : {}),
       client: ctx.getClient?.() ?? null,
+      warnings,
     }
     return reply(caps)
   } catch (e) {

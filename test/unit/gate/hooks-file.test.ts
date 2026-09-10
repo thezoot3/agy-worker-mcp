@@ -36,6 +36,8 @@ describe('hooksFilePath', () => {
 })
 
 describe('ensureGateHook', () => {
+  const nodeCmd = `'${process.execPath.replace(/'/g, `'\\''`)}'`
+
   it('creates .agents/hooks.json and adds our gate entry', () => {
     const gatePath = '/path/to/gate.js'
     ensureGateHook(workspace, gatePath)
@@ -49,7 +51,7 @@ describe('ensureGateHook', () => {
       PreToolUse: [
         {
           matcher: '*',
-          hooks: [{ type: 'command', command: "node '/path/to/gate.js'", timeout: 15 }],
+          hooks: [{ type: 'command', command: `${nodeCmd} '/path/to/gate.js'`, timeout: 15 }],
         },
       ],
     })
@@ -61,7 +63,7 @@ describe('ensureGateHook', () => {
 
     const filePath = hooksFilePath(workspace)
     const content = JSON.parse(readFileSync(filePath, 'utf8'))
-    const expectedCommand = "node '/path with spaces/and '\\''single quotes'\\''/gate.js'"
+    const expectedCommand = `${nodeCmd} '/path with spaces/and '\\''single quotes'\\''/gate.js'`
     expect(content[GATE_HOOK_KEY].PreToolUse[0].hooks[0].command).toBe(expectedCommand)
   })
 
@@ -108,7 +110,24 @@ describe('ensureGateHook', () => {
     const filePath = hooksFilePath(workspace)
     const content = JSON.parse(readFileSync(filePath, 'utf8'))
     expect(Object.keys(content).filter((k) => k === GATE_HOOK_KEY)).toHaveLength(1)
-    expect(content[GATE_HOOK_KEY].PreToolUse[0].hooks[0].command).toBe("node '/second/gate.js'")
+    expect(content[GATE_HOOK_KEY].PreToolUse[0].hooks[0].command).toBe(`${nodeCmd} '/second/gate.js'`)
+  })
+
+  it('contains an absolute Node path, not the bare word node, and the path is quoted', () => {
+    ensureGateHook(workspace, '/path/to/gate.js')
+    const filePath = hooksFilePath(workspace)
+    const content = JSON.parse(readFileSync(filePath, 'utf8'))
+    const cmd = content[GATE_HOOK_KEY].PreToolUse[0].hooks[0].command as string
+
+    // Must not start with bare "node "
+    expect(cmd.startsWith('node ')).toBe(false)
+    // First token must be single-quoted and point to an absolute path
+    expect(cmd.startsWith("'")).toBe(true)
+    const firstQuoteEnd = cmd.indexOf("'", 1)
+    expect(firstQuoteEnd).toBeGreaterThan(1)
+    const quotedNodePath = cmd.slice(1, firstQuoteEnd)
+    expect(quotedNodePath.startsWith('/')).toBe(true)
+    expect(cmd).toContain(nodeCmd)
   })
 })
 

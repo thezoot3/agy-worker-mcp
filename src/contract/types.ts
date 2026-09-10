@@ -1290,4 +1290,6 @@ export interface Capabilities {
   agy_bin_present: boolean
   /** The connected client's own `initialize` declaration. See {@link ClientSnapshot}. */
   client: ClientSnapshot | null
+  /** Degenerate project root or configuration warnings. */
+  warnings: string[]
 }

@@ -53,7 +53,9 @@ separate from `agy`'s self-report (`agent_report`). Read `outcome` and
 
 ## Requirements
 
-- Node.js ≥ 22.5
+- Node.js ≥ 22.5, installed with a version manager. A root-owned global prefix
+  (the official `.pkg` installs into `/usr/local`) makes `npm install -g` fail
+  with `EACCES`.
 - The `agy` CLI on `PATH` (developed and measured against agy 1.1.24–1.1.27).
   `agy_capabilities` tells you whether the server can find it.
 
@@ -64,9 +66,8 @@ npm install -g agy-worker-mcp
 ```
 
 That puts `agy-worker-mcp`, `agy-worker-setup` and the two helper binaries
-(`agy-worker-runner`, `agy-worker-gate`) on your `PATH`. No global install:
-`npx -y agy-worker-mcp@latest` runs the server and
-`npx -y -p agy-worker-mcp agy-worker-setup` runs the setup below.
+(`agy-worker-runner`, `agy-worker-gate`) on your `PATH`. To run the setup
+command once without a global install: `npx -y -p agy-worker-mcp agy-worker-setup`.
 
 Register it — Claude Code, project-scoped, which is easy to undo and affects
 nothing else:
@@ -108,6 +109,11 @@ cd agy-worker-mcp
 npm install          # `prepare` builds dist/ for you
 claude mcp add agy --scope project -- node "$PWD/dist/server.js"
 ```
+
+A clone registered this way cannot run jobs in that same clone: `agy_start`
+refuses a workspace that contains the gate binary (`gate binary must not lie
+inside the workspace`). Contributors who want to dogfood must register the
+globally installed copy.
 
 Registering by absolute path means the server runs whatever is in `dist/` —
 re-run `npm run build` after editing `src/`.

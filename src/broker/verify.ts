@@ -175,8 +175,71 @@ export function checkExpectedArtifacts(cwd: string, expected: string[]): Artifac
 }
 
 /**
+ * Unquotes a path formatted by `git status --porcelain`. Git wraps paths
+ * containing whitespace, quotes, or control characters in C-style double quotes.
+ */
+function unquoteGitPath(rawPath: string): string {
+  const trimmed = rawPath.trim()
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed) as string
+    } catch {
+      return trimmed.slice(1, -1)
+    }
+  }
+  return trimmed
+}
+
+/**
+ * Checks whether a path refers to our own housekeeping artefacts:
+ * `.agents/` (or anything under it) or `.worktrees/` (or anything under it).
+ */
+function isHousekeepingPath(rawPath: string): boolean {
+  const normalized = unquoteGitPath(rawPath).replace(/\\/g, '/')
+  return (
+    normalized === '.agents' ||
+    normalized.startsWith('.agents/') ||
+    normalized === '.worktrees' ||
+    normalized.startsWith('.worktrees/')
+  )
+}
+
+/**
+ * Checks whether a `git status --porcelain` entry represents our own housekeeping
+ * artefacts.
+ *
+ * Porcelain entries have the structure `XY <path>`, where paths may be quoted if
+ * containing spaces or unusual characters, and renames/copies appear as `XY <old> -> <new>`.
+ * Substring matching is deliberately avoided so valid user files containing `.agents` or
+ * `.worktrees` in other positions (such as `my.agents.ts` or `foo/.worktrees`) are preserved.
+ */
+export function isHousekeepingPorcelainLine(line: string): boolean {
+  if (line.length < 4 || line[2] !== ' ') return false
+  const status = line.slice(0, 2)
+  const rest = line.slice(3)
+
+  if ((status.includes('R') || status.includes('C')) && rest.includes(' -> ')) {
+    const arrowIndex = rest.indexOf(' -> ')
+    const oldPath = rest.slice(0, arrowIndex)
+    const newPath = rest.slice(arrowIndex + 4)
+    return isHousekeepingPath(oldPath) || isHousekeepingPath(newPath)
+  }
+
+  return isHousekeepingPath(rest)
+}
+
+/**
  * `git status --porcelain` inside the workspace, via an argv array (never a shell
  * string). Empty when the workspace is not a git repo — that is not an error.
+ *
+ * Filter our own artefacts out of the verification result:
+ * - `.agents/` (or anything under it): `hooks.json` is written into the workspace
+ *   by `agy_start` moments earlier, and only cleaned up after verification completes
+ *   (`removeGateHookIfIdle`). In any repository that does not already ignore `.agents/`,
+ *   the hook file would otherwise be reported as an untracked change (`?? .agents/`).
+ *   A job cannot write to `.agents` at all — `.agents` is HARD_DENY in policy — so
+ *   filtering it here cannot hide any real work produced by the job.
+ * - `.worktrees/` (or anything under it): job worktrees placed in the workspace.
  */
 export function changedFiles(cwd: string): string[] {
   try {
@@ -196,7 +259,7 @@ export function changedFiles(cwd: string): string[] {
     return out
       .split('\n')
       .map((l) => l.trimEnd())
-      .filter((l) => l.length > 0)
+      .filter((l) => l.length > 0 && !isHousekeepingPorcelainLine(l))
   } catch {
     // Not a git repo, git not installed, or the command failed. None of these
     // are fatal to the job — they just mean nothing to report here.

@@ -70,7 +70,7 @@ export interface GitRootResolution {
  * Any parse failure or missing path falls back to the directory holding the
  * `.git` file without throwing, degrading safely to legacy behaviour.
  */
-function resolveGitFile(dir: string, gitEntry: string): GitRootResolution {
+export function resolveGitFile(dir: string, gitEntry: string): GitRootResolution {
   const fallback: GitRootResolution = { root: canonicalize(dir), source: 'git' }
   try {
     const content = readFileSync(gitEntry, 'utf8').trim()

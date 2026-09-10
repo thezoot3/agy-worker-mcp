@@ -28,9 +28,17 @@ function shQuote(s: string): string {
  * load it at all (see docs/permissions.md) — this is the piece that puts the
  * file there in the first place, since nothing else in the package owns it.
  *
- * The command is just `node '<gatePath>'` — quoted (an unquoted absolute path
- * breaks on any install path containing a space). There used to be a
- * `|| printf '{"decision":"ask"}'` fallback here; it is gone. agy already fails closed on its own —
+ * The command is `${shQuote(process.execPath)} ${shQuote(gatePath)}` — both
+ * quoted (an unquoted absolute path breaks on any install path containing a
+ * space). We invoke Node by its absolute path (`process.execPath`) rather than
+ * the bare word `node`: agy executes the hook in an allow-listed environment
+ * where PATH may lack Node entirely (e.g. GUI-launched MCP clients whose
+ * launchd PATH omits version-manager bins, or when the server was registered
+ * with an absolute path), or where PATH resolves to an incompatible Node
+ * runtime. Using `process.execPath` guarantees the gate runs under the exact
+ * runtime running this server.
+ *
+ * There used to be a `|| printf '{"decision":"ask"}'` fallback here; it is gone. agy already fails closed on its own —
  * empty/non-JSON stdout or a non-zero exit is a *denial*, not a pass-through
  * (measured against 1.1.23, `src/gate/gate.ts`'s own header comment) — so the
  * fallback never protected anything: its only effect was to convert that
@@ -57,7 +65,7 @@ function shQuote(s: string): string {
 export function ensureGateHook(workspace: string, gatePath: string): void {
   const hooksPath = hooksFilePath(workspace)
   const existing = readJsonIfExists<Record<string, unknown>>(hooksPath) ?? {}
-  const command = `node ${shQuote(gatePath)}`
+  const command = `${shQuote(process.execPath)} ${shQuote(gatePath)}`
   const ours = {
     PreToolUse: [
       {

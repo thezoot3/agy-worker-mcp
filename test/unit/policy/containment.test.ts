@@ -267,21 +267,23 @@ describe('mutating commands write targets', () => {
 })
 
 describe('validateWriteRoots sanity', () => {
-  it('throws ValidationError when effective write root is root (/)', () => {
+  it('throws ValidationError when effective write root is root (/) and names the cause', () => {
     expect(() => validateWriteRoots(['/'])).toThrow(ValidationError)
     try {
       validateWriteRoots(['/'])
     } catch (e) {
       expect((e as ValidationError).detail.field).toBe('write_roots')
+      expect((e as ValidationError).message).toContain('client working directory')
     }
   })
 
-  it('throws ValidationError when effective write root is home directory', () => {
+  it('throws ValidationError when effective write root is home directory and names the cause', () => {
     expect(() => validateWriteRoots([homedir()])).toThrow(ValidationError)
     try {
       validateWriteRoots([homedir()])
     } catch (e) {
       expect((e as ValidationError).detail.field).toBe('write_roots')
+      expect((e as ValidationError).message).toContain('client working directory')
     }
   })
 

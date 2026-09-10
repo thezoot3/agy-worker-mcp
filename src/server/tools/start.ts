@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 
 import { ValidationError } from '../../contract/errors.js'
@@ -13,6 +14,7 @@ import {
   jobPaths,
   newJobId,
   newSessionId,
+  resolveGitFile,
   stateHome,
   writeJsonAtomic,
 } from '../../contract/paths.js'
@@ -161,6 +163,70 @@ export type StartInput = z.infer<typeof startInput>
 
 function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max)
+}
+
+/**
+ * Ensures `.git/info/exclude` in a git workspace contains `.agents/` and `.worktrees/`.
+ *
+ * Keeps our runtime artefacts out of the user's `git status` without modifying
+ * the repository's `.gitignore` or introducing uncommitted changes.
+ *
+ * In a linked worktree, `.git` is a file referencing the worktree's gitdir;
+ * we reuse `resolveGitFile` from `contract/paths.ts` to locate the common `.git`
+ * directory where `info/exclude` is shared across all worktrees.
+ *
+ * Append-only: never modifies or reorders existing lines, and never adds an entry
+ * that is already present. If `.git/info/exclude` does not exist, or `.git` does
+ * not exist, or the workspace is not a git repository, or writing fails — does
+ * nothing. Housekeeping writes must never fail a job.
+ */
+export function ensureGitExclude(workspace: string): void {
+  try {
+    const gitEntry = join(workspace, '.git')
+    const stat = statSync(gitEntry, { throwIfNoEntry: false })
+    if (!stat) return
+
+    let gitDir: string | null = null
+    if (stat.isDirectory()) {
+      gitDir = gitEntry
+    } else if (stat.isFile()) {
+      const res = resolveGitFile(workspace, gitEntry)
+      if (res.source === 'git-worktree') {
+        const candidate = join(res.root, '.git')
+        if (statSync(candidate, { throwIfNoEntry: false })?.isDirectory()) {
+          gitDir = candidate
+        }
+      }
+    }
+
+    if (!gitDir) return
+
+    const excludePath = join(gitDir, 'info', 'exclude')
+    if (!existsSync(excludePath)) return
+
+    const content = readFileSync(excludePath, 'utf8')
+    const lines = content.split(/\r?\n/).map((l) => l.trim())
+
+    const hasAgents = lines.some(
+      (l) => l === '.agents/' || l === '.agents' || l === '/.agents/' || l === '/.agents',
+    )
+    const hasWorktrees = lines.some(
+      (l) => l === '.worktrees/' || l === '.worktrees' || l === '/.worktrees/' || l === '/.worktrees',
+    )
+
+    if (hasAgents && hasWorktrees) return
+
+    let addition = ''
+    if (content.length > 0 && !content.endsWith('\n')) {
+      addition += '\n'
+    }
+    if (!hasAgents) addition += '.agents/\n'
+    if (!hasWorktrees) addition += '.worktrees/\n'
+
+    appendFileSync(excludePath, addition, 'utf8')
+  } catch {
+    // Best effort: housekeeping writes must never fail a job.
+  }
 }
 
 /** Opportunistic retention window for finished job directories. */
@@ -541,6 +607,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
     }
 
     ensureGateHook(cwd, gatePath)
+    ensureGitExclude(cwd)
 
     // Detached: the runner outlives this server process entirely.
     // stdio is 'ignore' — the runner redirects agy's own stdout/stderr

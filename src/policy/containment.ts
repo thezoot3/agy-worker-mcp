@@ -1055,14 +1055,16 @@ export function validateWriteRoots(writeRoots: string[], gatePath?: string): voi
       throw new ValidationError({
         field: 'write_roots',
         value: root,
-        expected: 'effective write root must not be root directory (/)',
+        expected:
+          'effective write root must not be root directory (/) — resolved from client working directory; set AGY_WORKER_PROJECT to the target project directory',
       })
     }
     if (cRoot === home) {
       throw new ValidationError({
         field: 'write_roots',
         value: root,
-        expected: 'effective write root must not be home directory',
+        expected:
+          'effective write root must not be home directory — resolved from client working directory; set AGY_WORKER_PROJECT to the target project directory',
       })
     }
     if (cRoot === sHome || isWithin(sHome, cRoot)) {
