@@ -47,7 +47,7 @@ Two profiles ship (`research_readonly`, `general_worker`); read their live allow
 
 ## The project ceiling file
 
-Version 2 since 0.3.0. A `version: 1` file (`extra_allow` / `extra_deny` / `additional_dirs`) is still read and converted, with a warning in `agy_capabilities.ceiling.warnings` naming the renames; it is dropped in 0.4.
+Version 2 since 0.3.0. A `version: 1` file (`extra_allow` / `extra_deny` / `additional_dirs`) is still read and converted, with a warning in `agy_capabilities.ceiling.warnings` naming the renames; it is **rejected** in 0.4.0 — a job will not start against a version 1 file. `agy_ceiling()` returns `v1_migration` with the version 2 equivalent and the one command that writes it; convert before upgrading.
 
 `<state home>/projects/<sha256(canonical_root)[:16]>/policy.json`. Missing file → empty ceiling (narrower, not wider, than having one). Present but invalid — bad JSON, wrong `version`, an unparsable rule, an `exceptions` entry naming a `HARD_DENY` rule, or a legacy `unsandboxed` key — and `agy_start` fails closed with a `ValidationError` naming the file.
 

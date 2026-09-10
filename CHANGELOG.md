@@ -4,6 +4,22 @@ All notable changes to agy-worker-mcp. Dates are the day the version landed on
 `main`. Measurements against the real `agy` CLI are noted with the agy version
 they were taken on.
 
+## 0.3.3 — 2026-09-10
+
+A deprecation notice with its own remedy. No behaviour changes.
+
+- **Version 1 ceiling files now announce their removal, and hand you the
+  replacement.** `agy_ceiling()` returns a `v1_migration` block when the
+  project's `policy.json` is still `version: 1`: the exact version 2 equivalent
+  (same permissions, nothing widened) and the single `cat > … <<'JSON'` command
+  that writes it. 0.4.0 rejects version 1 outright — a job will not start
+  against one — so the conversion has to be possible before that release, not
+  after it.
+- The `agy_capabilities.ceiling.warnings` text for a version 1 file says
+  "rejected in 0.4.0" instead of "removed in 0.4", and points at `agy_ceiling()`.
+- `skills/agy-ceiling` handles `v1_migration` as its first step. The approval
+  rule is unchanged: this server has no code path that writes `policy.json`.
+
 ## 0.3.2 — 2026-09-10
 
 Documentation only. No code changes.

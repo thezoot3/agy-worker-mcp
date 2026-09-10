@@ -1211,6 +1211,12 @@ export interface CeilingReply {
   preflight: Array<{ command: string; decision: 'allow' | 'deny'; stage: string; required_rule: string | null }> | null
   /** Denial history and command frequencies across this project's jobs; null when a draft was given. */
   history: import('../trace/digest.js').ProjectDigest | null
+  /**
+   * Present only when this project's ceiling file is still version 1, which
+   * 0.4.0 rejects. Carries the version 2 equivalent and the single command
+   * that writes it, so the deprecation comes with its own remedy.
+   */
+  v1_migration?: { draft: Record<string, unknown>; write_command: string; note: string }
   writes_nothing: true
 }
 

@@ -248,7 +248,7 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
     readRoots = d.additional_dirs ?? []
     const present = V1_RENAMES.filter(([from]) => from in (json as Record<string, unknown>))
     warnings.push(
-      `policy.json is version 1; rename ${present.length > 0 ? present.map(([a, b]) => `${a} → ${b}`).join(', ') : 'its keys'} and set "version": 2 (v1 is read and converted in 0.3.x, removed in 0.4)`,
+      `policy.json is version 1; rename ${present.length > 0 ? present.map(([a, b]) => `${a} → ${b}`).join(', ') : 'its keys'} and set "version": 2. Version 1 is read and converted in 0.3.x and REJECTED in 0.4.0 — a job will not start against it. Call agy_ceiling() for the converted file and the one command that writes it`,
     )
   } else {
     allow = d.allow ?? []
@@ -356,5 +356,46 @@ export function describeCeiling(ceiling: Ceiling, path: string, present: boolean
     write_roots: ceiling.write_roots,
     command_policy: ceiling.command_policy,
     warnings: present ? ceiling.warnings : [...ceiling.warnings, ceilingAbsenceHint(path)],
+  }
+}
+
+/**
+ * The version 2 equivalent of a loaded version 1 ceiling, plus the one command
+ * that writes it.
+ *
+ * The conversion itself already happened in {@link parseCeilingJson} — a v1
+ * file is read into the same {@link Ceiling} shape as a v2 one — so this is a
+ * re-serialization, not a second parser. It exists because 0.4.0 rejects v1
+ * outright: telling someone their file will stop working is only half an
+ * answer, and this server will never write the file itself (the human owns it,
+ * `docs/permissions.md`). So we hand over exactly what to write and let them
+ * run it.
+ *
+ * Returns `null` for anything that is not a version 1 file, so the caller can
+ * attach the result unconditionally.
+ */
+export function migrateV1ToV2(ceiling: Ceiling): { draft: Record<string, unknown>; write_command: string; note: string } | null {
+  if (ceiling.version !== 1) return null
+
+  // Only the keys that carry something. A converted file should read like one
+  // a person would have written, not like a template with empty arrays.
+  const draft: Record<string, unknown> = { version: 2 }
+  if (ceiling.allow.length > 0) draft.allow = ceiling.allow
+  if (ceiling.deny.length > 0) draft.deny = ceiling.deny
+  if (ceiling.read_roots.length > 0) draft.read_roots = ceiling.read_roots
+  if (ceiling.write_roots.length > 0) draft.write_roots = ceiling.write_roots
+  if (ceiling.sandbox !== 'none') draft.sandbox = ceiling.sandbox
+  if (ceiling.command_policy !== 'allowlist') draft.command_policy = ceiling.command_policy
+
+  const path = ceiling.path ?? '<policy.json>'
+  const write_command = `cat > ${path} <<'JSON'\n${JSON.stringify(draft, null, 2)}\nJSON`
+
+  return {
+    draft,
+    write_command,
+    note:
+      'This project\'s ceiling is version 1, which 0.4.0 rejects: jobs will fail to start until it is converted. ' +
+      'The draft below is the exact equivalent of the current file — same permissions, no widening. ' +
+      'Show it to the user and let them run the command; this server never writes policy.json.',
   }
 }

@@ -4,7 +4,7 @@ import { z } from 'zod'
 
 import { reconcile } from '../../broker/reconcile.js'
 import type { CeilingReply } from '../../contract/types.js'
-import { ceilingPath, describeCeiling, loadCeiling, parseCeilingJson } from '../../policy/ceiling.js'
+import { ceilingPath, describeCeiling, loadCeiling, migrateV1ToV2, parseCeilingJson } from '../../policy/ceiling.js'
 import { reviewCeilingDraft } from '../../policy/ceiling-review.js'
 import { HARD_DENY } from '../../policy/hard-deny.js'
 import { resolvePolicy } from '../../policy/profiles.js'
@@ -120,6 +120,10 @@ export async function handleCeiling(ctx: ToolContext, input: CeilingInput): Prom
       history: review === null ? projectHistory(ctx.paths.jobsDir, input.history_limit ?? 100) : null,
       writes_nothing: true,
     }
+    // Attached whatever the caller asked for: someone reviewing a draft still
+    // needs to know the file they are about to replace stops loading in 0.4.0.
+    const migration = migrateV1ToV2(current)
+    if (migration) out.v1_migration = migration
     return reply(out)
   } catch (e) {
     return errorReply(e)

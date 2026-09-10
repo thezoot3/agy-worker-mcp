@@ -12,6 +12,7 @@ import {
   ceilingPath,
   EMPTY_CEILING,
   loadCeiling,
+  migrateV1ToV2,
 } from '../../../src/policy/ceiling.js'
 import { resolvePolicy } from '../../../src/policy/profiles.js'
 
@@ -163,6 +164,38 @@ describe('loadCeiling — valid file', () => {
     expect(c.warnings).toHaveLength(1)
     expect(c.warnings[0]).toContain('extra_allow → allow')
     expect(c.warnings[0]).toContain('additional_dirs → read_roots')
+  })
+
+  it('offers the version 2 equivalent of a version 1 file, with the command that writes it', () => {
+    writeCeilingFile(
+      JSON.stringify({
+        version: 1,
+        extra_allow: ['command(./gradlew)'],
+        extra_deny: ['command(curl)'],
+        sandboxed: true,
+        command_policy: 'denylist',
+      }),
+    )
+    const migration = migrateV1ToV2(loadCeiling({ dir: stateDir }))
+    expect(migration).not.toBeNull()
+    expect(migration?.draft).toMatchObject({
+      version: 2,
+      allow: ['command(./gradlew)'],
+      deny: ['command(curl)'],
+      sandbox: 'agy',
+      command_policy: 'denylist',
+    })
+    // Nothing empty: a converted file should read like one a person wrote.
+    expect(migration?.draft).not.toHaveProperty('exceptions')
+    expect(migration?.draft).not.toHaveProperty('write_roots')
+    expect(migration?.write_command).toContain(ceilingPath({ dir: stateDir }))
+    expect(migration?.write_command).toContain("<<'JSON'")
+  })
+
+  it('offers no migration for a version 2 file or for no file at all', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, allow: ['command(ls)'] }))
+    expect(migrateV1ToV2(loadCeiling({ dir: stateDir }))).toBeNull()
+    expect(migrateV1ToV2(EMPTY_CEILING)).toBeNull()
   })
 
   it('a version 1 file with the new key names is rejected (keys are per-version)', () => {
