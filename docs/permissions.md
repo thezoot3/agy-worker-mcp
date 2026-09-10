@@ -184,6 +184,27 @@ What remains, by design or as a known limit:
 
 The general lesson stands: a new shell construct is a new hole until the parser rejects it.
 
+### The repository a worktree came from
+
+A `isolation: "worktree"` job's workspace is the worktree, so the base
+repository — its parent on disk — is **not** readable. That is the isolation
+working, but it has a measured consequence worth knowing before you meet it
+(agy 1.1.27, 2026-09-11): agy's file tools report *resolved* paths, so after a
+read through a `link_paths` symlink the agent has seen a path outside its own
+workspace, and it sometimes addresses a later `find_by_name` or `grep_search`
+there. The gate refuses that — correctly, and not actionably: no
+`permissions.allow` entry widens containment.
+
+The job recovers and finishes; the cost is that one refusal makes `outcome`
+`blocked`, which by this server's own vocabulary means "did not do what you
+asked". Read `verification.blockers[]` before believing that of a worktree job:
+a single `policy: "containment"` denial naming the project root, with the work
+present in the worktree, is this and not a failure.
+
+Widening a worktree job's reads to the whole base repository would remove the
+friction and most of the isolation with it — another job's worktree, and the
+user's own uncommitted work, are both in there. It is not done.
+
 ### Foreign hooks
 
 The PreToolUse hook mechanism has interaction points with external configuration outside our repository:

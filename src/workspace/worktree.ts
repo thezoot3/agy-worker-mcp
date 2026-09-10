@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, symlinkSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 
 import { ValidationError } from '../contract/errors.js'
 import { canonicalize, isWithin } from '../contract/paths.js'
@@ -79,10 +79,15 @@ export function createJobWorktree(input: {
     const target = join(worktreePath, entry)
     try {
       mkdirSync(dirname(target), { recursive: true })
-      // Point symlink at the absolute source path so it remains valid
-      // regardless of the worktree's location.
-      const absSource = resolve(input.root, entry)
-      symlinkSync(absSource, target)
+      // Relative, not absolute. Measured 2026-09-11 on agy 1.1.27: with an
+      // absolute link the agent reads the target path out of an `ls -l`, decides
+      // that is where the real files are, and searches *there* — outside its own
+      // workspace, which containment then denies, turning a job that did its work
+      // into `blocked`. A relative link never shows the agent a path outside the
+      // worktree. Containment still resolves the symlink and still judges the
+      // real directory (that is what `linkedRoots` is for); this only stops
+      // advertising it.
+      symlinkSync(relative(dirname(target), resolve(input.root, entry)), target)
       linked.push(entry)
       linkedRoots.push(canonicalize(source))
     } catch (err) {
@@ -201,7 +206,7 @@ export function worktreeStatus(path: string): number | null {
     return res.stdout
       .split('\n')
       .map((l) => l.trimEnd())
-      .filter((l) => l.length > 0 && !isHousekeepingPorcelainLine(l)).length
+      .filter((l) => l.length > 0 && !isHousekeepingPorcelainLine(l, path)).length
   } catch {
     return null
   }

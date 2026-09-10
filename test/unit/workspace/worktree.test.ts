@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -126,6 +126,9 @@ describe('createJobWorktree and removeJobWorktree', () => {
     expect(existsSync(worktreeNodeModules)).toBe(true)
     expect(lstatSync(worktreeNodeModules).isSymbolicLink()).toBe(true)
     expect(realpathSync(worktreeNodeModules)).toBe(realpathSync(nodeModulesDir))
+    // Relative on purpose: an absolute link shows the agent a path outside its
+    // own workspace, and it goes looking there (measured on agy 1.1.27).
+    expect(readlinkSync(worktreeNodeModules).startsWith('/')).toBe(false)
 
     const content = readFileSync(join(worktreeNodeModules, 'package.json'), 'utf8')
     expect(content).toBe('{"name":"test"}')
@@ -199,6 +202,34 @@ describe('createJobWorktree and removeJobWorktree', () => {
       branch: creation.branch,
       force: true,
     })
+  })
+
+  /**
+   * A repository whose `.gitignore` says `node_modules/` — with the trailing
+   * slash, which matches a directory and not a symlink to one — reports the
+   * link this server created as an untracked change. Counting it would mean
+   * `on_finish: "remove"` never fires and `agy_release_workspace` demands
+   * `force` for a job that changed nothing.
+   */
+  it.skipIf(!hasGit)('does not count the link this server created as the job\'s work', () => {
+    mkdirSync(join(repo, 'node_modules'), { recursive: true })
+    writeFileSync(join(repo, 'node_modules', 'x.js'), '1\n')
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\n')
+    runGit(repo, ['add', '.gitignore'])
+    runGit(repo, ['commit', '-m', 'ignore node_modules'])
+
+    const creation = createJobWorktree({
+      root: repo,
+      jobId: 'link-noise',
+      baseRef: 'HEAD',
+      linkPaths: ['node_modules'],
+    })
+    expect(worktreeStatus(creation.path)).toBe(0)
+
+    writeFileSync(join(creation.path, 'made-by-the-job.txt'), 'work\n')
+    expect(worktreeStatus(creation.path)).toBe(1)
+
+    removeJobWorktree({ root: repo, path: creation.path, branch: creation.branch, force: true })
   })
 
   /**

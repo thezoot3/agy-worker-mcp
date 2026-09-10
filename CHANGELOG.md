@@ -62,6 +62,16 @@ the first two entries.
   unmerged worktree destroys the job's whole output.
   `agy_capabilities.worktrees` lists whatever is still on disk, read from git's
   own worktree list so one whose job directory was cleaned up still shows up.
+- Measured on the first live worktree run (agy 1.1.27, 2026-09-11): the link is
+  created **relative**, not absolute, and the symlink the server made no longer
+  counts as one of the job's changed files. A repository whose `.gitignore`
+  says `node_modules/` — trailing slash, which matches a directory and not a
+  symlink to one — reported it as untracked work, which would have meant
+  `on_finish: "remove"` never fired and `agy_release_workspace` demanded
+  `force` for a job that changed nothing. The same run also showed agy
+  addressing the base repository after reading a resolved path through the
+  link; the gate refuses that, and `docs/permissions.md` says so rather than
+  the boundary being widened to hide it.
 - **`command(git worktree)` is denied** for `general_worker`. A job that can add
   or remove worktrees can move its own workspace out from under the gate.
 - **A linked worktree resolves to its main repository.** `.git` as a *file*

@@ -362,6 +362,10 @@ export function resolvePolicy(input: ResolvePolicyInput): EffectivePolicy {
   for (const root of linkedRoots) {
     if (!additionalDirs.includes(root)) {
       additionalDirs.push(root)
+      // These come from the ceiling's `link_paths` like any other ceiling-sourced
+      // root, so leaving the source at "none" while `add_dirs` is non-empty would
+      // just be a lie in the reply.
+      if (additionalDirsSource === 'none') additionalDirsSource = 'ceiling'
     }
   }
   const roots = buildRoots(workspace, additionalDirs)

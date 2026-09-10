@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 
 import type {
@@ -14,7 +14,7 @@ import type {
   VerifyRecord,
   VerifyResult,
 } from '../contract/types.js'
-import { canonicalize, containedOrNull, jobPaths, readJsonIfExists } from '../contract/paths.js'
+import { canonicalize, containedOrNull, isWithin, jobPaths, readJsonIfExists } from '../contract/paths.js'
 import { scanDenials } from '../events/detect.js'
 import type { Store } from '../store/db.js'
 import { now } from '../store/db.js'
@@ -213,7 +213,7 @@ function isHousekeepingPath(rawPath: string): boolean {
  * Substring matching is deliberately avoided so valid user files containing `.agents` or
  * `.worktrees` in other positions (such as `my.agents.ts` or `foo/.worktrees`) are preserved.
  */
-export function isHousekeepingPorcelainLine(line: string): boolean {
+export function isHousekeepingPorcelainLine(line: string, cwd?: string): boolean {
   if (line.length < 4 || line[2] !== ' ') return false
   const status = line.slice(0, 2)
   const rest = line.slice(3)
@@ -225,7 +225,34 @@ export function isHousekeepingPorcelainLine(line: string): boolean {
     return isHousekeepingPath(oldPath) || isHousekeepingPath(newPath)
   }
 
-  return isHousekeepingPath(rest)
+  if (isHousekeepingPath(rest)) return true
+  return cwd !== undefined && isServerLink(cwd, rest)
+}
+
+/**
+ * A `link_paths` symlink the server put in a worktree, reported as an untracked
+ * change because the project's `.gitignore` says `node_modules/` — with the
+ * trailing slash, which matches a directory and not a symlink to one.
+ *
+ * Measured 2026-09-11: without this, every worktree job reports at least one
+ * changed file it did not make. That is not merely cosmetic — `on_finish:
+ * "remove"` would then never fire, and `agy_release_workspace` would demand
+ * `force` for a job that changed nothing.
+ *
+ * Recognised structurally rather than by name: an untracked symlink whose
+ * target leaves the workspace is something only this server creates. A job
+ * cannot make one — a symlink pointing outside the workspace is a write the
+ * gate refuses.
+ */
+function isServerLink(cwd: string, relativePath: string): boolean {
+  try {
+    const workspace = canonicalize(cwd)
+    const entry = join(workspace, unquoteGitPath(relativePath))
+    if (!lstatSync(entry, { throwIfNoEntry: false })?.isSymbolicLink()) return false
+    return !isWithin(canonicalize(entry), workspace)
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -259,7 +286,7 @@ export function changedFiles(cwd: string): string[] {
     return out
       .split('\n')
       .map((l) => l.trimEnd())
-      .filter((l) => l.length > 0 && !isHousekeepingPorcelainLine(l))
+      .filter((l) => l.length > 0 && !isHousekeepingPorcelainLine(l, cwd))
   } catch {
     // Not a git repo, git not installed, or the command failed. None of these
     // are fatal to the job — they just mean nothing to report here.
