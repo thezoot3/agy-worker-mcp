@@ -35,17 +35,78 @@ import { dirname, isAbsolute, join, parse as parsePath, relative, resolve, sep }
 import { fileURLToPath } from 'node:url'
 
 import { PathEscapeError } from './errors.js'
-import { ENV } from './types.js'
+import { ENV, type ProjectRootSource } from './types.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Project root discovery
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ProjectRootSource = 'env' | 'git' | 'cwd'
+export type { ProjectRootSource } from './types.js'
 
 export interface ProjectRootResolution {
   root: string
   source: ProjectRootSource
+  movedFrom?: string
+}
+
+export interface GitRootResolution {
+  root: string
+  source: 'git' | 'git-worktree' | 'git-submodule'
+}
+
+/**
+ * When `.git` is a file rather than a directory, it either points to a linked
+ * git worktree or to a submodule. For a worktree, git places a `commondir` file
+ * inside the per-worktree git directory pointing back to the main repository's
+ * `.git` — we follow that indirection to the common directory's parent so every
+ * worktree of one repository shares a single lock domain, SQLite database, and
+ * permission ceiling.
+ *
+ * For submodules, there is no `commondir` file: the git dir itself is the
+ * submodule repository's git directory. We intentionally do not climb to the
+ * superproject because a submodule is an independent repository with its own
+ * history and permission boundary.
+ *
+ * Any parse failure or missing path falls back to the directory holding the
+ * `.git` file without throwing, degrading safely to legacy behaviour.
+ */
+function resolveGitFile(dir: string, gitEntry: string): GitRootResolution {
+  const fallback: GitRootResolution = { root: canonicalize(dir), source: 'git' }
+  try {
+    const content = readFileSync(gitEntry, 'utf8').trim()
+    const lines = content.split(/\r?\n/)
+    if (lines.length !== 1) return fallback
+
+    const match = /^gitdir:\s*(.+)$/.exec(lines[0]!)
+    if (!match) return fallback
+
+    const rawGitDir = match[1]!.trim()
+    if (!rawGitDir) return fallback
+
+    const gitDir = resolve(dir, rawGitDir)
+    const gitDirStat = statSync(gitDir, { throwIfNoEntry: false })
+    if (!gitDirStat || !gitDirStat.isDirectory()) return fallback
+
+    const commonDirFile = join(gitDir, 'commondir')
+    if (existsSync(commonDirFile)) {
+      const commonDirRaw = readFileSync(commonDirFile, 'utf8').trim()
+      if (!commonDirRaw) return fallback
+
+      const commonGitDir = resolve(gitDir, commonDirRaw)
+      const commonStat = statSync(commonGitDir, { throwIfNoEntry: false })
+      if (!commonStat || !commonStat.isDirectory()) return fallback
+
+      const parentDir = dirname(commonGitDir)
+      const parentStat = statSync(parentDir, { throwIfNoEntry: false })
+      if (!parentStat || !parentStat.isDirectory()) return fallback
+
+      return { root: canonicalize(parentDir), source: 'git-worktree' }
+    }
+
+    return { root: canonicalize(dir), source: 'git-submodule' }
+  } catch {
+    return fallback
+  }
 }
 
 /**
@@ -64,7 +125,13 @@ export function resolveProjectRoot(startCwd: string = process.cwd()): ProjectRoo
   }
   const start = canonicalize(resolve(startCwd))
   const gitRoot = findGitRoot(start)
-  if (gitRoot) return { root: gitRoot, source: 'git' }
+  if (gitRoot) {
+    return {
+      root: gitRoot.root,
+      source: gitRoot.source,
+      ...(gitRoot.source === 'git-worktree' ? { movedFrom: start } : {}),
+    }
+  }
   return { root: start, source: 'cwd' }
 }
 
@@ -74,10 +141,23 @@ export function projectRoot(startCwd?: string): string {
 }
 
 /** Walks up looking for `.git` (a directory *or* a worktree/submodule file). */
-export function findGitRoot(startCanonical: string): string | null {
+export function findGitRoot(startCanonical: string): GitRootResolution | null {
   let dir = startCanonical
   for (;;) {
-    if (existsSync(join(dir, '.git'))) return dir
+    const gitEntry = join(dir, '.git')
+    try {
+      const stat = statSync(gitEntry, { throwIfNoEntry: false })
+      if (stat) {
+        if (stat.isDirectory()) {
+          return { root: canonicalize(dir), source: 'git' }
+        }
+        if (stat.isFile()) {
+          return resolveGitFile(dir, gitEntry)
+        }
+      }
+    } catch {
+      return { root: canonicalize(dir), source: 'git' }
+    }
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent
@@ -103,6 +183,8 @@ export function projectKey(canonicalRoot: string): string {
 export interface ProjectPaths {
   /** Canonical project root inside the user's filesystem. */
   root: string
+  source: ProjectRootSource
+  movedFrom?: string
   key: string
   /** `<stateHome>/projects/<key>` */
   dir: string
@@ -111,11 +193,17 @@ export interface ProjectPaths {
   jobsDir: string
 }
 
-export function projectPaths(canonicalRoot: string): ProjectPaths {
+export function projectPaths(
+  canonicalRoot: string,
+  source: ProjectRootSource = 'cwd',
+  movedFrom?: string,
+): ProjectPaths {
   const key = projectKey(canonicalRoot)
   const dir = join(stateHome(), 'projects', key)
   return {
     root: canonicalRoot,
+    source,
+    ...(movedFrom ? { movedFrom } : {}),
     key,
     dir,
     projectJson: join(dir, 'project.json'),

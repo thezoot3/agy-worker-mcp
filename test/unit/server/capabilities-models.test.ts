@@ -4,9 +4,12 @@
  * a suffixed name accepts exactly its suffix, `claude-*` accepts nothing,
  * omission is always fine. `agy_start` refuses the rest before spawning.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { acceptedEfforts, MEASURED_MODELS } from '../../../src/server/tools/capabilities.js'
+import { acceptedEfforts, handleCapabilities, MEASURED_MODELS } from '../../../src/server/tools/capabilities.js'
+import { DEFAULT_LIMITS, type ToolContext } from '../../../src/server/context.js'
+import type { Capabilities } from '../../../src/contract/types.js'
+import { makeTestStore, type TestStoreHandle } from '../helpers/store.js'
 
 const EFFORTS = ['low', 'medium', 'high']
 
@@ -51,5 +54,43 @@ describe('acceptedEfforts', () => {
 
   it('is null for a name it knows nothing about', () => {
     expect(acceptedEfforts('unobserved-custom-model')).toBeNull()
+  })
+})
+
+describe('agy_capabilities handler fields', () => {
+  let handle: TestStoreHandle
+  let ctx: ToolContext
+
+  beforeEach(() => {
+    handle = makeTestStore()
+    ctx = {
+      store: handle.store,
+      paths: handle.store.paths,
+      version: '0.2.2',
+      limits: DEFAULT_LIMITS,
+    }
+  })
+
+  afterEach(() => {
+    handle.cleanup()
+  })
+
+  it('reports project_root_source and omits project_root_moved_from for standard workspace', async () => {
+    const rep = await handleCapabilities(ctx, {})
+    const payload = JSON.parse(rep.content[0]!.text) as Capabilities
+    expect(payload.project_root_source).toBe(handle.store.paths.source)
+    expect(payload.project_root_moved_from).toBeUndefined()
+  })
+
+  it('reports project_root_source and project_root_moved_from when source is git-worktree', async () => {
+    ctx.paths = {
+      ...ctx.paths,
+      source: 'git-worktree',
+      movedFrom: '/path/to/worktree',
+    }
+    const rep = await handleCapabilities(ctx, {})
+    const payload = JSON.parse(rep.content[0]!.text) as Capabilities
+    expect(payload.project_root_source).toBe('git-worktree')
+    expect(payload.project_root_moved_from).toBe('/path/to/worktree')
   })
 })

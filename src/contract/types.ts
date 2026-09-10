@@ -1232,10 +1232,14 @@ export interface ModelCapability {
   efforts: readonly string[]
 }
 
+export type ProjectRootSource = 'env' | 'git' | 'git-worktree' | 'git-submodule' | 'cwd'
+
 export interface Capabilities {
   server_version: string
   schema_version: number
   project_root: string
+  project_root_source: ProjectRootSource
+  project_root_moved_from?: string
   project_key: string
   profiles: Array<{
     name: Profile

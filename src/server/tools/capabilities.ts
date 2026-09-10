@@ -102,6 +102,10 @@ export async function handleCapabilities(
       server_version: ctx.version,
       schema_version: SCHEMA_VERSION,
       project_root: ctx.paths.root,
+      project_root_source: ctx.paths.source,
+      ...(ctx.paths.source === 'git-worktree' && ctx.paths.movedFrom
+        ? { project_root_moved_from: ctx.paths.movedFrom }
+        : {}),
       project_key: ctx.paths.key,
       profiles: describeProfiles(),
       ceiling: describeCeiling(ceiling, ceilingFile, ceilingPresent),

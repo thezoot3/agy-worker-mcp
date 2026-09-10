@@ -40,8 +40,8 @@ export interface OpenStoreOptions {
  * so running `schema.sql` alone is not enough), then {@link migrate}.
  */
 export function openStore(opts?: OpenStoreOptions): Store {
-  const { root } = resolveProjectRoot(opts?.cwd)
-  const paths = projectPaths(root)
+  const { root, source, movedFrom } = resolveProjectRoot(opts?.cwd)
+  const paths = projectPaths(root, source, movedFrom)
   const readOnly = opts?.readOnly ?? false
   if (!readOnly) {
     ensureProjectDirs(paths)
