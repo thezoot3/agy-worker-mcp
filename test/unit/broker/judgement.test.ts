@@ -226,9 +226,9 @@ describe('a silent sandbox block', () => {
     expect(packet.headline).not.toContain('(actionable)')
   })
 
-  it('when sandboxed by permissions.sandboxed: actionable: true, remedy says retry without it', () => {
+  it('when sandboxed by permissions.sandbox: actionable: true, remedy says retry without it', () => {
     const { packet, blockers } = judge(SIGNAL, (workspace) => {
-      const policy = resolvePolicy({ profile: 'general_worker', workspace, requested: { sandboxed: true } })
+      const policy = resolvePolicy({ profile: 'general_worker', workspace, requested: { sandbox: 'agy' } })
       expect(policy.bypass_sandbox).toBe(false)
       expect(policy.sandbox_forced_by).toBe('request')
       return policy
@@ -238,9 +238,9 @@ describe('a silent sandbox block', () => {
     expect(b.source).toBe('sandbox')
     expect(b.blocks_outcome).toBe(true)
     expect(b.actionable).toBe(true)
-    expect(b.remedy).toContain('retry without permissions.sandboxed')
+    expect(b.remedy).toContain('retry without permissions.sandbox')
     expect(b.remedy).toContain('read_roots')
-    expect(b.message).toContain('permissions.sandboxed was set')
+    expect(b.message).toContain('permissions.sandbox was set')
     expect(packet.outcome).toBe('blocked')
     expect(packet.headline).toContain('1 sandbox block (actionable)')
   })

@@ -296,9 +296,9 @@ describe('BypassSandbox — default bypass on general_worker, forced sandboxed b
     }
   })
 
-  it('general_worker + ceiling sandboxed: true forces BypassSandbox: false and reports human ceiling remedy', async () => {
+  it('general_worker + ceiling sandbox: "agy" forces BypassSandbox: false and reports human ceiling remedy', async () => {
     applyEnv(project, 'additional-dir')
-    writeCeiling(project, { version: 2, allow: ['command(ls)'], sandboxed: true })
+    writeCeiling(project, { version: 2, allow: ['command(ls)'], sandbox: 'agy' })
 
     const { createContext } = await import('../../src/server/context.js')
     const { handleStart } = await import('../../src/server/tools/start.js')
@@ -330,7 +330,7 @@ describe('BypassSandbox — default bypass on general_worker, forced sandboxed b
     }
   })
 
-  it('general_worker + permissions.sandboxed: true forces BypassSandbox: false and reports retry remedy', async () => {
+  it('general_worker + permissions.sandbox: "agy" forces BypassSandbox: false and reports retry remedy', async () => {
     applyEnv(project, 'additional-dir')
     writeCeiling(project, { version: 2, allow: ['command(ls)'] })
 
@@ -342,7 +342,7 @@ describe('BypassSandbox — default bypass on general_worker, forced sandboxed b
     const ctx = createContext()
     try {
       const started = replyJson(
-        await handleStart(ctx, { prompt: 'x', profile: 'general_worker', permissions: { sandboxed: true } } as never),
+        await handleStart(ctx, { prompt: 'x', profile: 'general_worker', permissions: { sandbox: 'agy' } } as never),
       ) as { job_id: string }
       const waited = replyJson(await handleWait(ctx, { job_id: started.job_id, wait_ms: 10_000 } as never)) as {
         lifecycle: string
@@ -356,7 +356,7 @@ describe('BypassSandbox — default bypass on general_worker, forced sandboxed b
       const sandboxBlockers = verification.verification.blockers.filter((b) => b.source === 'sandbox')
       expect(sandboxBlockers.length).toBe(1)
       expect(sandboxBlockers[0]!.detail?.signature).toBe('Operation not permitted')
-      expect(sandboxBlockers[0]!.remedy).toContain('retry without permissions.sandboxed')
+      expect(sandboxBlockers[0]!.remedy).toContain('retry without permissions.sandbox')
       expect(waited.outcome).toBe('blocked')
     } finally {
       ctx.store.close()

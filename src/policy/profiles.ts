@@ -74,7 +74,7 @@ export const PROFILES: Readonly<Record<Profile, ProfileDef>> = Object.freeze({
   general_worker: {
     name: 'general_worker',
     description:
-      'Workspace development worker. Network (curl/wget/ssh/scp), remote git (push), package managers, containers, sudo, and destructive git commands are blocked by default and can only be enabled via exceptions in the project ceiling policy.json (0.3.0). Reads/writes within the workspace, local git operations, common build/test commands (gradle, maven, npm test/run, javac/java, pytest), basic utilities, and python3 -c / node -e / bash -c are allowed. bash -c "<s>" undergoes recursive evaluation, so inner commands must also be allowed to pass. Any shell command not in this list is denied (allowlist; can be switched to ceiling command_policy: denylist) — a bound job\'s gate never issues an "ask" decision (I1). Subagent tools are always denied because they run in a separate conversation and can bypass this job\'s policy (M2). {workspace}/.agents is always write-protected against all writes including shell redirection because it holds the gate\'s own hook configuration (I6). Allowed run_command executions run without agy\'s OS sandbox by default (BypassSandbox: true, I2); sandboxing can be enforced by ceiling (sandboxed: true) or request (permissions.sandboxed: true).',
+      'Workspace development worker. Network (curl/wget/ssh/scp), remote git (push), package managers, containers, sudo, and destructive git commands are blocked by default and can only be enabled via exceptions in the project ceiling policy.json (0.3.0). Reads/writes within the workspace, local git operations, common build/test commands (gradle, maven, npm test/run, javac/java, pytest), basic utilities, and python3 -c / node -e / bash -c are allowed. bash -c "<s>" undergoes recursive evaluation, so inner commands must also be allowed to pass. Any shell command not in this list is denied (allowlist; can be switched to ceiling command_policy: denylist) — a bound job\'s gate never issues an "ask" decision (I1). Subagent tools are always denied because they run in a separate conversation and can bypass this job\'s policy (M2). {workspace}/.agents is always write-protected against all writes including shell redirection because it holds the gate\'s own hook configuration (I6). Allowed run_command executions run without agy\'s OS sandbox by default (BypassSandbox: true, I2); sandboxing can be enforced by ceiling (sandbox: "agy") or request (permissions.sandbox: "agy").',
     write: true,
     // The build commands are here for `intersectAllow`, not just the gate:
     // without them in the ceiling, a client asking for them in
@@ -274,9 +274,14 @@ export function resolvePolicy(input: ResolvePolicyInput): EffectivePolicy {
   // `sandbox` (0.3.0 PR6): the strictest of profile / ceiling / request wins,
   // ordered none < seatbelt < agy. research_readonly is always `agy` (the OS
   // enforces read-only for free, 0.2.1). `bypass_sandbox` / `sandbox_forced_by`
-  // are derived views the gate and broker already read (I2).
-  const requestedSandbox: SandboxMode | null =
-    input.requested?.sandbox ?? (input.requested?.sandboxed ? 'agy' : null)
+  if (input.requested && 'sandboxed' in input.requested && (input.requested as Record<string, unknown>).sandboxed !== undefined) {
+    throw new ValidationError({
+      field: 'permissions.sandbox',
+      value: (input.requested as Record<string, unknown>).sandboxed,
+      expected: 'the legacy "sandboxed" request field was removed in 0.4.0; write "sandbox": "agy" (or "seatbelt") instead',
+    })
+  }
+  const requestedSandbox: SandboxMode | null = input.requested?.sandbox ?? null
   let sandbox: SandboxMode
   let sandboxSource: 'profile' | 'ceiling' | 'request' | 'default'
   if (!def.write) {

@@ -49,10 +49,11 @@ describe('reviewCeilingDraft', () => {
     expect(hd.errors[0]).toContain('HARD_DENY')
   })
 
-  it('a v1 draft is ok but carries the rename warning', () => {
+  it('a v1 draft fails review with the conversion error', () => {
     const r = reviewCeilingDraft({ version: 1, extra_allow: ['command(ls)'] })
-    expect(r.ok).toBe(true)
-    expect(r.warnings.some((w) => w.includes('extra_allow → allow'))).toBe(true)
+    expect(r.ok).toBe(false)
+    expect(r.errors[0]).toContain('"version": 2')
+    expect(r.errors[0]).toContain("<<'JSON'")
   })
 
   it('flags redundant allow, allow-vs-deny confusion, and exceptions that lift nothing', () => {

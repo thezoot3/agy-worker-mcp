@@ -246,7 +246,7 @@ describe('blockerFromEnvironmentBlock', () => {
     expect(b.source).toBe('sandbox')
     expect(b.actionable).toBe(true)
     expect(b.blocks_outcome).toBe(true)
-    expect(b.remedy).toContain('retry without permissions.sandboxed')
+    expect(b.remedy).toContain('retry without permissions.sandbox')
   })
 
   it('when sandbox_forced_by is "profile", produces actionable: true with general_worker remedy', () => {

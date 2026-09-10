@@ -188,7 +188,7 @@ describe('a Class 2 (silent environment) block is detected even though status st
         prompt: 'x',
         profile: 'general_worker',
         expected_artifacts: [],
-        permissions: { sandboxed: true },
+        permissions: { sandbox: 'agy' },
       } as never),
     ) as { job_id: string }
     const waited = replyJson(await handleWait(ctx, { job_id: started.job_id, wait_ms: 10_000 } as never)) as {

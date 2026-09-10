@@ -31,7 +31,7 @@ import type {
  * | `gate`           | our gate's confirmed refusal          | yes        | its `required_rule`           | yes            |
  * | `gate` (containment) | command left the workspace        | **no**     | none — no rule grants this    | yes            |
  * | `agy_engine`     | agy's own permission engine refused   | no         | none — outside our policy     | **no**         |
- * | `sandbox`        | Class 2 signature match, sandboxed job | depends    | why the job was sandboxed: `permissions.sandboxed` (retry without it), `research_readonly` (use general_worker), ceiling `sandboxed: true` (human) | yes |
+ * | `sandbox`        | Class 2 signature match, sandboxed job | depends    | why the job was sandboxed: `permissions.sandbox` (retry without it), `research_readonly` (use general_worker), ceiling `sandbox: "agy"` (human) | yes |
  * | `broker`         | missing `expected_artifacts` entry    | yes        | which artifact is missing     | yes            |
  * | `broker`         | I4: gate never confirmed itself (`gate_confirmed === false`) | **no** | none — hooks.json never loaded, nothing to fix by rule | yes (and forces `outcome: 'process_error'` directly, not just `blocked` — see `decideOutcome`) |
  * | `tool_error`     | a failing tool call, no signature     | no         | none — not a permission issue | **no**         |
@@ -177,8 +177,8 @@ export function blockerFromEnvironmentBlock(b: DenialClass2, policy?: EffectiveP
     return {
       ...base,
       actionable: true,
-      remedy: `retry without permissions.sandboxed; ${additionalDirsGuidance}`,
-      message: `agy's sandbox blocked this silently (signature "${b.signature}") because permissions.sandboxed was set for this job: ${b.excerpt}`,
+      remedy: `retry without permissions.sandbox; ${additionalDirsGuidance}`,
+      message: `agy's sandbox blocked this silently (signature "${b.signature}") because permissions.sandbox was set for this job: ${b.excerpt}`,
     }
   }
 

@@ -3,7 +3,7 @@
  * (`policy/ceiling.ts`, docs/permissions.md). A caller checks
  * this before `agy_start` to see what a `permissions.read_roots` request
  * could ever be granted, and whether the project forces the sandbox on
- * (`sandboxed`), without guessing from a rejected `agy_start` reply.
+ * (`sandbox`), without guessing from a rejected `agy_start` reply.
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
@@ -60,7 +60,7 @@ describe('agy_capabilities.ceiling', () => {
         version: 2,
         allow: ['command(./gradlew)', 'write_file({workspace}/build/**)'],
         deny: ['command(curl)'],
-        sandboxed: true,
+        sandbox: 'agy',
         read_roots: [],
       }),
     )

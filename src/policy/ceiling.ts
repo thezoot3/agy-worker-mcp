@@ -42,8 +42,7 @@ export interface Ceiling {
   /**
    * OS boundary for general_worker commands (0.3.0 PR6): `none` (default,
    * the 0.2.1 behaviour), `seatbelt` (our write-only `sandbox-exec` profile),
-   * or `agy` (agy's own sandbox, the 0.2.0 behaviour). A v2 `sandboxed: true`
-   * and every v1 `sandboxed: true` read as `agy`.
+   * or `agy` (agy's own sandbox, the 0.2.0 behaviour).
    */
   sandbox: SandboxMode
   /**
@@ -61,9 +60,9 @@ export interface Ceiling {
   write_roots: string[]
   /** Command evaluation mode: "allowlist" (default) or "denylist" (0.2.2 PR3). */
   command_policy: 'allowlist' | 'denylist'
-  /** Schema version the file was written in; null when no file. */
-  version: 1 | 2 | null
-  /** Non-fatal notes for `agy_capabilities` (e.g. v1 key names). */
+  /** Schema version the file was written in (version 2); null when no file. */
+  version: 2 | null
+  /** Non-fatal notes for `agy_capabilities`. */
   warnings: string[]
 }
 
@@ -81,6 +80,10 @@ export const EMPTY_CEILING: Ceiling = Object.freeze({
   warnings: [],
 })
 
+/**
+ * Version 1 schema. Kept as a migration schema to parse and convert legacy
+ * policy.json files; version 1 is no longer loaded as a valid Ceiling in 0.4.0.
+ */
 const ceilingSchemaV1 = z.object({
   version: z.literal(1),
   extra_allow: z.array(z.string()).optional(),
@@ -96,21 +99,12 @@ const ceilingSchemaV2 = z.object({
   deny: z.array(z.string()).optional(),
   exceptions: z.array(z.string()).optional(),
   sandbox: z.enum(['none', 'seatbelt', 'agy']).optional(),
-  /** Legacy spelling of `sandbox: 'agy'`; kept so a 0.2.x v2-shaped file still loads. */
-  sandboxed: z.boolean().optional(),
   read_roots: z.array(z.string()).optional(),
   write_roots: z.array(z.string()).optional(),
   command_policy: z.enum(['allowlist', 'denylist']).optional(),
 }).strict()
 
-const ceilingSchema = z.discriminatedUnion('version', [ceilingSchemaV1, ceilingSchemaV2])
-
-/** v1 → v2 key names, for the conversion warning and the error text. */
-const V1_RENAMES: ReadonlyArray<readonly [string, string]> = [
-  ['extra_allow', 'allow'],
-  ['extra_deny', 'deny'],
-  ['additional_dirs', 'read_roots'],
-]
+const ceilingSchema = ceilingSchemaV2
 
 /** `<project state dir>/policy.json`. Exported so callers (capabilities, tests) don't hardcode the filename. */
 export function ceilingPath(paths: { dir: string }): string {
@@ -219,7 +213,35 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
   if (typeof json === 'object' && json !== null && 'unsandboxed' in json) {
     return fail(
       path,
-      'the "unsandboxed" key was removed in 0.2.1; allowed commands now run without agy\'s OS sandbox by default. Delete "unsandboxed" from policy.json (and set "sandboxed": true if you want the old behaviour of forcing the sandbox on)',
+      'the "unsandboxed" key was removed in 0.2.1; allowed commands now run without agy\'s OS sandbox by default. Delete "unsandboxed" from policy.json (and set "sandbox": "agy" if you want the old behaviour of forcing the sandbox on)',
+    )
+  }
+
+  // Version 1 rejection (0.4.0): fail closed with a ValidationError that
+  // contains the conversion: the version 2 draft and the cat command that writes it.
+  if (typeof json === 'object' && json !== null && 'version' in json && (json as Record<string, unknown>).version === 1) {
+    const migration = migrateV1ToV2(json, path)
+    if (migration) {
+      return fail(
+        path,
+        `policy.json is version 1, which 0.4.0 rejects: jobs will fail to start until it is converted.\n` +
+          `Convert to version 2 using this command:\n\n${migration.write_command}`,
+        json,
+      )
+    }
+    return fail(
+      path,
+      'policy.json specifies version: 1, which 0.4.0 rejects, but does not match the version 1 schema',
+      json,
+    )
+  }
+
+  // Reject the pre-0.3.0 legacy "sandboxed" spelling with a helpful message naming sandbox: "agy".
+  if (typeof json === 'object' && json !== null && 'sandboxed' in json) {
+    return fail(
+      path,
+      'policy.json uses the legacy "sandboxed" key; write "sandbox": "agy" (or "none") instead',
+      json,
     )
   }
 
@@ -232,39 +254,15 @@ export function parseCeilingJson(json: unknown, path: string): Ceiling {
     )
   }
 
-  const warnings: string[] = []
-  let allow: string[]
-  let deny: string[]
-  let exceptions: string[]
-  let readRoots: string[]
-  let writeRoots: string[] = []
-  let sandbox: SandboxMode
   const d = parsed.data
-  if (d.version === 1) {
-    sandbox = d.sandboxed ? 'agy' : 'none'
-    allow = d.extra_allow ?? []
-    deny = d.extra_deny ?? []
-    exceptions = []
-    readRoots = d.additional_dirs ?? []
-    const present = V1_RENAMES.filter(([from]) => from in (json as Record<string, unknown>))
-    warnings.push(
-      `policy.json is version 1; rename ${present.length > 0 ? present.map(([a, b]) => `${a} → ${b}`).join(', ') : 'its keys'} and set "version": 2. Version 1 is read and converted in 0.3.x and REJECTED in 0.4.0 — a job will not start against it. Call agy_ceiling() for the converted file and the one command that writes it`,
-    )
-  } else {
-    allow = d.allow ?? []
-    deny = d.deny ?? []
-    exceptions = d.exceptions ?? []
-    readRoots = d.read_roots ?? []
-    writeRoots = d.write_roots ?? []
-    if (d.sandbox !== undefined && d.sandboxed !== undefined) {
-      return fail(path, 'policy.json sets both "sandbox" and the legacy "sandboxed"; keep "sandbox" only')
-    }
-    sandbox = d.sandbox ?? (d.sandboxed ? 'agy' : 'none')
-    if (d.sandboxed !== undefined) {
-      warnings.push('policy.json uses the legacy "sandboxed" key; write "sandbox": "agy" (or "none") instead')
-    }
-  }
+  const allow = d.allow ?? []
+  const deny = d.deny ?? []
+  const exceptions = d.exceptions ?? []
+  const readRoots = d.read_roots ?? []
+  const writeRoots = d.write_roots ?? []
+  const sandbox = d.sandbox ?? 'none'
   const commandPolicy = d.command_policy ?? 'allowlist'
+  const warnings: string[] = []
   for (const root of writeRoots) {
     if (root.includes('*')) {
       return fail(path, `write_roots entry is a glob (${root}); write roots are plain directories`)
@@ -360,35 +358,35 @@ export function describeCeiling(ceiling: Ceiling, path: string, present: boolean
 }
 
 /**
- * The version 2 equivalent of a loaded version 1 ceiling, plus the one command
+ * The version 2 equivalent of a version 1 ceiling JSON object, plus the one command
  * that writes it.
  *
- * The conversion itself already happened in {@link parseCeilingJson} — a v1
- * file is read into the same {@link Ceiling} shape as a v2 one — so this is a
- * re-serialization, not a second parser. It exists because 0.4.0 rejects v1
- * outright: telling someone their file will stop working is only half an
- * answer, and this server will never write the file itself (the human owns it,
- * `docs/permissions.md`). So we hand over exactly what to write and let them
- * run it.
+ * Restructured in 0.4.0 to work from the raw parsed JSON of a version 1 file
+ * rather than from a loaded Ceiling, because a rejected version 1 file never
+ * becomes a Ceiling.
  *
- * Returns `null` for anything that is not a version 1 file, so the caller can
- * attach the result unconditionally.
+ * Returns `null` for anything that is not a valid version 1 file, so the caller can
+ * attach the result conditionally.
  */
-export function migrateV1ToV2(ceiling: Ceiling): { draft: Record<string, unknown>; write_command: string; note: string } | null {
-  if (ceiling.version !== 1) return null
+export function migrateV1ToV2(
+  raw: unknown,
+  path?: string | null,
+): { draft: Record<string, unknown>; write_command: string; note: string } | null {
+  const parsed = ceilingSchemaV1.safeParse(raw)
+  if (!parsed.success) return null
 
+  const d = parsed.data
   // Only the keys that carry something. A converted file should read like one
   // a person would have written, not like a template with empty arrays.
   const draft: Record<string, unknown> = { version: 2 }
-  if (ceiling.allow.length > 0) draft.allow = ceiling.allow
-  if (ceiling.deny.length > 0) draft.deny = ceiling.deny
-  if (ceiling.read_roots.length > 0) draft.read_roots = ceiling.read_roots
-  if (ceiling.write_roots.length > 0) draft.write_roots = ceiling.write_roots
-  if (ceiling.sandbox !== 'none') draft.sandbox = ceiling.sandbox
-  if (ceiling.command_policy !== 'allowlist') draft.command_policy = ceiling.command_policy
+  if (d.extra_allow && d.extra_allow.length > 0) draft.allow = d.extra_allow
+  if (d.extra_deny && d.extra_deny.length > 0) draft.deny = d.extra_deny
+  if (d.additional_dirs && d.additional_dirs.length > 0) draft.read_roots = d.additional_dirs
+  if (d.sandboxed) draft.sandbox = 'agy'
+  if (d.command_policy && d.command_policy !== 'allowlist') draft.command_policy = d.command_policy
 
-  const path = ceiling.path ?? '<policy.json>'
-  const write_command = `cat > ${path} <<'JSON'\n${JSON.stringify(draft, null, 2)}\nJSON`
+  const targetPath = path ?? '<policy.json>'
+  const write_command = `cat > ${targetPath} <<'JSON'\n${JSON.stringify(draft, null, 2)}\nJSON`
 
   return {
     draft,

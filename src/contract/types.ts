@@ -438,7 +438,7 @@ export interface ParsedRule {
 
 /**
  * What a client may ask for on `agy_start`. Narrowing only — never widening.
- * `sandboxed: true` forces agy's OS sandbox on for this job even on general_worker.
+ * `sandbox: "agy"` forces agy's OS sandbox on for this job even on general_worker.
  * `read_roots` narrows the *human ceiling* (`policy/ceiling.ts`).
  */
 /** OS boundary for an allowed `run_command` (0.3.0 PR6). Ordered: none < seatbelt < agy. */
@@ -447,7 +447,10 @@ export type SandboxMode = 'none' | 'seatbelt' | 'agy'
 export interface RequestedPermissions {
   allow?: string[]
   deny?: string[]
-  /** Forces agy's OS sandbox on for this job (0.2.0 behaviour). Narrowing only: true forces sandbox on; false or absent changes nothing. Same as `sandbox: 'agy'`. */
+  /**
+   * @deprecated Removed in 0.4.0. Passing this field at runtime throws ValidationError naming `sandbox`.
+   * Kept on the type interface so legacy test fixtures and external callers still typecheck.
+   */
   sandboxed?: boolean
   /** Tightening only: `seatbelt` or `agy`. Never loosens what the profile or ceiling set. */
   sandbox?: 'seatbelt' | 'agy'
@@ -1144,7 +1147,7 @@ export interface CeilingSummary {
   /** Absolute path of the ceiling file, whether or not it exists. */
   path: string
   present: boolean
-  /** Schema version the file was written in (2 current; 1 is read and converted). Null when absent. */
+  /** Schema version the file was written in (version 2 current). Null when absent. */
   version: 1 | 2 | null
   allow: string[]
   deny: string[]
@@ -1159,6 +1162,8 @@ export interface CeilingSummary {
   command_policy: 'allowlist' | 'denylist'
   /** Non-fatal notes about the file (e.g. a v1 file whose keys should be renamed). */
   warnings: string[]
+  /** Present when the ceiling file exists on disk but failed to load (e.g. rejected version 1). */
+  error?: string
 }
 
 /** Risk class `agy_ceiling` attaches to every rule in a draft (`policy/ceiling-review.ts`). */
@@ -1217,6 +1222,8 @@ export interface CeilingReply {
    * that writes it, so the deprecation comes with its own remedy.
    */
   v1_migration?: { draft: Record<string, unknown>; write_command: string; note: string }
+  /** Present when the current ceiling file failed to load (e.g. version 1). */
+  error?: string
   writes_nothing: true
 }
 

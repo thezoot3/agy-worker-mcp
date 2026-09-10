@@ -81,10 +81,10 @@ export const startInput = z.object({
         .array(z.string())
         .optional()
         .describe('Always wins: unioned with the profile deny list and HARD_DENY, never narrowed.'),
-      sandboxed: z
-        .boolean()
+      sandbox: z
+        .enum(['seatbelt', 'agy'])
         .optional()
-        .describe('Forces agy\'s OS sandbox on for this job (0.2.0 behaviour). Parent can only narrow: true forces the sandbox on; false or absent changes nothing.'),
+        .describe("Tightening only: 'seatbelt' or 'agy'. Never loosens what the profile or ceiling set."),
       read_roots: z
         .array(z.string())
         .optional()
@@ -92,6 +92,12 @@ export const startInput = z.object({
           "The project ceiling's read_roots apply by default. List entries here only to use a subset of them; entries outside the ceiling are dropped and reported in rejected_read_roots.",
         ),
     })
+    // Strict: an unknown key here is a caller asking for something we do not
+    // implement, and both ways to get that wrong matter. `sandboxed` was
+    // removed in 0.4.0, and a silently stripped `sandboxed: true` would give
+    // the job *less* sandboxing than the caller asked for; a typo like
+    // `read_root` would silently grant nothing at all.
+    .strict()
     .optional()
     .describe(
       'Three-owner model (see docs/permissions.md): code (HARD_DENY, profiles) is fixed; the project ceiling (~/.agy-worker/projects/<hash>/policy.json, human-owned, outside the workspace) sets what can ever be granted; this field only narrows within that ceiling, never widens it.',

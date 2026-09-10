@@ -68,8 +68,8 @@ describe('resolvePolicy — sandbox', () => {
     expect(cc.sandbox_source).toBe('ceiling')
   })
 
-  it('requested sandboxed: true still means agy', () => {
-    const p = resolvePolicy({ profile: 'general_worker', workspace: WS, requested: { sandboxed: true } })
+  it('requested sandbox: "agy" sets sandbox agy and sandbox_source request', () => {
+    const p = resolvePolicy({ profile: 'general_worker', workspace: WS, requested: { sandbox: 'agy' } })
     expect(p.sandbox).toBe('agy')
     expect(p.sandbox_source).toBe('request')
   })

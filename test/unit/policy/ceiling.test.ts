@@ -104,13 +104,13 @@ describe('loadCeiling — invalid file fails closed with ValidationError', () =>
 })
 
 describe('loadCeiling — valid file', () => {
-  it('reads allow/deny/sandboxed verbatim, {workspace} left unsubstituted', () => {
+  it('reads allow/deny/sandbox verbatim, {workspace} left unsubstituted', () => {
     writeCeilingFile(
       JSON.stringify({
         version: 2,
         allow: ['command(./gradlew)', 'write_file({workspace}/build/**)'],
         deny: ['command(curl)'],
-        sandboxed: true,
+        sandbox: 'agy',
       }),
     )
     const ceiling = loadCeiling({ dir: stateDir })
@@ -144,7 +144,7 @@ describe('loadCeiling — valid file', () => {
     expect(loadCeiling({ dir: stateDir }).exceptions).toEqual(['command(git push)', 'command(npm install)'])
   })
 
-  it('reads a version 1 file, converts its keys, and warns with the rename list', () => {
+  it('a version 1 file throws ValidationError from loadCeiling containing the conversion', () => {
     writeCeilingFile(
       JSON.stringify({
         version: 1,
@@ -154,48 +154,48 @@ describe('loadCeiling — valid file', () => {
         command_policy: 'denylist',
       }),
     )
-    const c = loadCeiling({ dir: stateDir })
-    expect(c.version).toBe(1)
-    expect(c.allow).toEqual(['command(./gradlew)'])
-    expect(c.deny).toEqual(['command(curl)'])
-    expect(c.exceptions).toEqual([])
-    expect(c.read_roots).toHaveLength(1)
-    expect(c.command_policy).toBe('denylist')
-    expect(c.warnings).toHaveLength(1)
-    expect(c.warnings[0]).toContain('extra_allow → allow')
-    expect(c.warnings[0]).toContain('additional_dirs → read_roots')
+    let thrown: ValidationError | null = null
+    try {
+      loadCeiling({ dir: stateDir })
+    } catch (e) {
+      if (e instanceof ValidationError) thrown = e
+    }
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('"version": 2')
+    expect(thrown!.message).toContain("<<'JSON'")
   })
 
-  it('offers the version 2 equivalent of a version 1 file, with the command that writes it', () => {
-    writeCeilingFile(
-      JSON.stringify({
-        version: 1,
-        extra_allow: ['command(./gradlew)'],
-        extra_deny: ['command(curl)'],
-        sandboxed: true,
-        command_policy: 'denylist',
-      }),
-    )
-    const migration = migrateV1ToV2(loadCeiling({ dir: stateDir }))
+  it('offers the version 2 equivalent of a version 1 file, with no empty keys', () => {
+    const rawV1 = {
+      version: 1,
+      extra_allow: ['command(./gradlew)'],
+      extra_deny: ['command(curl)'],
+      additional_dirs: ['/tmp'],
+      sandboxed: true,
+      command_policy: 'denylist',
+    }
+    const path = join(stateDir, 'policy.json')
+    const migration = migrateV1ToV2(rawV1, path)
     expect(migration).not.toBeNull()
-    expect(migration?.draft).toMatchObject({
+    expect(migration?.draft).toEqual({
       version: 2,
       allow: ['command(./gradlew)'],
       deny: ['command(curl)'],
+      read_roots: ['/tmp'],
       sandbox: 'agy',
       command_policy: 'denylist',
     })
     // Nothing empty: a converted file should read like one a person wrote.
     expect(migration?.draft).not.toHaveProperty('exceptions')
     expect(migration?.draft).not.toHaveProperty('write_roots')
-    expect(migration?.write_command).toContain(ceilingPath({ dir: stateDir }))
+    expect(migration?.write_command).toContain(path)
     expect(migration?.write_command).toContain("<<'JSON'")
   })
 
   it('offers no migration for a version 2 file or for no file at all', () => {
-    writeCeilingFile(JSON.stringify({ version: 2, allow: ['command(ls)'] }))
-    expect(migrateV1ToV2(loadCeiling({ dir: stateDir }))).toBeNull()
+    expect(migrateV1ToV2({ version: 2, allow: ['command(ls)'] })).toBeNull()
     expect(migrateV1ToV2(EMPTY_CEILING)).toBeNull()
+    expect(migrateV1ToV2(null)).toBeNull()
   })
 
   it('a version 1 file with the new key names is rejected (keys are per-version)', () => {
@@ -241,12 +241,26 @@ describe('loadCeiling + resolvePolicy — {workspace} substitution and sandboxed
     }
   })
 
-  it('ceiling with sandboxed: true forces bypass_sandbox to false and records forced_by', () => {
+  it('a version 2 file using sandboxed: true fails to load and the message names sandbox', () => {
+    writeCeilingFile(JSON.stringify({ version: 2, sandboxed: true }))
+    let thrown: ValidationError | null = null
+    try {
+      loadCeiling({ dir: stateDir })
+    } catch (e) {
+      if (e instanceof ValidationError) thrown = e
+    }
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('sandbox')
+  })
+
+  it('a valid version 2 file loads unchanged and resolves sandbox (regression)', () => {
     const workspaceBase = mkdtempSync(join(tmpdir(), 'agy-worker-ceiling-ws-'))
     try {
       const workspace = canonicalize(workspaceBase)
-      writeCeilingFile(JSON.stringify({ version: 2, sandboxed: true }))
+      writeCeilingFile(JSON.stringify({ version: 2, sandbox: 'agy' }))
       const ceiling = loadCeiling({ dir: stateDir })
+      expect(ceiling.version).toBe(2)
+      expect(ceiling.sandbox).toBe('agy')
       const policy = resolvePolicy({ profile: 'general_worker', workspace, ceiling })
 
       expect(policy.bypass_sandbox).toBe(false)

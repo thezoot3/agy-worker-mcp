@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { ValidationError } from '../../../src/contract/errors.js'
 import { canonicalize } from '../../../src/contract/paths.js'
 import { EMPTY_CEILING, type Ceiling } from '../../../src/policy/ceiling.js'
 import { describeProfiles, resolvePolicy } from '../../../src/policy/profiles.js'
@@ -139,22 +140,37 @@ describe('resolvePolicy — bypass_sandbox and sandbox_forced_by', () => {
     expect(policy.sandbox_forced_by).toBe('ceiling')
   })
 
-  it('general_worker + requested sandboxed: true resolves to bypass_sandbox: false, sandbox_forced_by: "request"', () => {
+  it('general_worker + requested sandboxed: true throws ValidationError naming sandbox', () => {
+    let thrown: ValidationError | null = null
+    try {
+      resolvePolicy({
+        profile: 'general_worker',
+        workspace,
+        requested: { sandboxed: true },
+      })
+    } catch (e) {
+      if (e instanceof ValidationError) thrown = e
+    }
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('sandbox')
+  })
+
+  it('general_worker + requested sandbox: "agy" resolves to bypass_sandbox: false, sandbox_forced_by: "request"', () => {
     const policy = resolvePolicy({
       profile: 'general_worker',
       workspace,
-      requested: { sandboxed: true },
+      requested: { sandbox: 'agy' },
     })
     expect(policy.bypass_sandbox).toBe(false)
     expect(policy.sandbox_forced_by).toBe('request')
   })
 
-  it('ceiling sandboxed: true takes precedence in sandbox_forced_by over requested sandboxed: true', () => {
+  it('ceiling sandbox: "agy" takes precedence in sandbox_forced_by over requested sandbox: "agy"', () => {
     const policy = resolvePolicy({
       profile: 'general_worker',
       workspace,
       ceiling: ceiling({ sandbox: 'agy' }),
-      requested: { sandboxed: true },
+      requested: { sandbox: 'agy' },
     })
     expect(policy.bypass_sandbox).toBe(false)
     expect(policy.sandbox_forced_by).toBe('ceiling')
