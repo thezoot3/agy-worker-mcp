@@ -35,9 +35,15 @@ the first two entries.
   worktree at `<root>/.worktrees/agy-<job_id>`, on branch `agy/<job_id>`
   (`base_ref` to branch from something other than HEAD). Two jobs on one
   repository stop fighting over one tree, and a caller can look at a job's work
-  without having already inherited it. The job still cannot commit — the
-  ceiling denies `git add` and `git commit` — so the caller merges. That is the
-  same rule as the `.agents` lockdown: no job promotes its own result.
+  without having already inherited it. The job still cannot commit: `git
+  commit`, `git merge`, `git rebase`, `git cherry-pick`, `git revert` and `git
+  stash` are denied for a worktree job, past anything a ceiling `exceptions`
+  entry could lift, so the caller merges. That is the same rule as the
+  `.agents` lockdown — no job promotes its own result — and it is what keeps
+  the handoff legible: a commit makes `git status` report a clean tree, so a
+  job that committed would look finished-and-empty to the two paths that delete
+  the branch. Both of those also refuse a branch carrying commits the base
+  lacks, which is what catches a human committing in the tree by hand.
 - **Ceiling key `link_paths`.** A fresh worktree has no `node_modules`, so
   every test command in a JavaScript project fails on the first call. The
   server symlinks the listed project-root-relative directories in — and, because
@@ -55,8 +61,9 @@ the first two entries.
   changes live is not a verdict.
 - **`agy_release_workspace`** — the eleventh tool. Removes a finished job's
   worktree and deletes its branch once you have merged it. Refuses a live job,
-  an `in_place` job, and a dirty worktree without `force` — including the case
-  where git will not report a status at all, which counts as dirty.
+  an `in_place` job, a dirty worktree, and a branch with unmerged commits
+  without `force` — including the case where git will not report a status at
+  all, which counts as dirty.
   `on_finish: 'remove'` does the same automatically for a job you already know
   you will not want the tree from; `keep` stays the default, because deleting an
   unmerged worktree destroys the job's whole output.

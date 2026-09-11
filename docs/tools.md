@@ -35,9 +35,9 @@ redirected to files in the job directory.
 | `json_schema` | string | — | Path to a JSON schema for structured output. Must be inside the project root. |
 | `verify_command` | string | — | A command the *runner* — not agy — runs once, after agy exits normally, against the final workspace state. Not sandboxed, not a security boundary: it runs as the user, at the same trust level as the parent agent running the command itself. A non-zero exit or a `verify_timeout_ms` timeout makes `outcome` `"failed"`, never a blocker. See [`permissions.md`](./permissions.md#verify_command). |
 | `verify_timeout_ms` | int | 10 min | Independent of `timeout_ms`/`deadline_at` — `verify_command` may run past the job's own deadline. Clamped to `limits.max_timeout_ms`. Ignored without `verify_command`. |
-| `isolation` | `in_place` \| `worktree` | `in_place` | `worktree` runs the job in a fresh git worktree at `<root>/.worktrees/agy-<job_id>` on branch `agy/<job_id>`. The job cannot commit; the caller merges. The ceiling's `link_paths` are symlinked in, read-only. |
+| `isolation` | `in_place` \| `worktree` | `in_place` | `worktree` runs the job in a fresh git worktree at `<root>/.worktrees/agy-<job_id>` on branch `agy/<job_id>`. The job cannot commit — `git commit`, `git merge`, `git rebase`, `git cherry-pick`, `git revert` and `git stash` are denied for the job, past anything the ceiling's `exceptions` could lift — so the caller merges. The ceiling's `link_paths` are symlinked in, read-only. |
 | `base_ref` | string | `HEAD` | `isolation: "worktree"` only. What to branch from. A bad ref fails before anything is created. |
-| `on_finish` | `keep` \| `remove` | `keep` | `isolation: "worktree"` only. `remove` deletes the worktree and branch when the job finishes — but only if nothing is uncommitted in it. A dirty worktree is kept and says so in the warnings. |
+| `on_finish` | `keep` \| `remove` | `keep` | `isolation: "worktree"` only. `remove` deletes the worktree **and the branch** when the job finishes — but only if nothing is uncommitted in it and the branch holds no commit the base lacks. Anything else is kept and says so in the warnings. |
 | `requested_by`, `parent_task_id` | string | — | Free-form attribution, echoed back by `agy_list_jobs`. |
 | `dry_run` | boolean | `false` | Resolve config, argv, and policy — including the ceiling's rejections — without spawning `agy`. Costs no quota. |
 | `expected_commands` | string[] | — | `dry_run` only: shell commands to evaluate against the effective policy. Returned in `preflight.commands` with allow/deny decisions. |
@@ -135,8 +135,8 @@ actually are, and what still has to happen to them:
 | `kind` | `"in_place"` or `"worktree"`. |
 | `path` | The workspace itself. |
 | `branch` | The job's branch, or `null` for `in_place`. |
-| `base_commit`, `head_commit` | What the worktree branched from, and where it ended. Equal unless something committed. |
-| `committed` | Always `false`. A job has no permission to commit its own work, so the caller merges. |
+| `base_commit`, `head_commit` | What the worktree branched from, and where it ended. Equal unless a human committed in the tree by hand — the job cannot. |
+| `committed` | Always `false`. The commit verbs are denied on a worktree job, so the branch is a proposal and the caller merges. |
 | `changed_file_count` | Length of `verification.changed_files` — our own `.agents/` and `.worktrees/` housekeeping already filtered out. |
 
 `verification.verify` — `null` when no `verify_command` was configured (or
@@ -270,12 +270,14 @@ merged it (or decided not to).
 | Field | Type | Notes |
 | --- | --- | --- |
 | `job_id` | string, required | |
-| `force` | boolean | Remove even with uncommitted changes in the worktree. |
+| `force` | boolean | Remove even with uncommitted changes, or with commits the base branch does not have. |
 
 Refuses a live job, refuses a job that ran `in_place`, and refuses a worktree
 with uncommitted changes unless `force` is set — including the case where git
 declines to report its status at all, which is treated as dirty rather than
-clean. Idempotent: a worktree that is already gone returns `removed: false`
+clean. It also refuses a branch that carries commits `base_commit` does not:
+removal ends in `git branch -D`, and `git status` calls a committed tree clean.
+Idempotent: a worktree that is already gone returns `removed: false`
 rather than an error.
 
 Nothing calls this for you. `on_finish: "remove"` handles the case where you

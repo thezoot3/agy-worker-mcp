@@ -248,3 +248,31 @@ export function listJobWorktrees(root: string): string[] {
     return []
   }
 }
+
+/**
+ * Commits on the worktree's branch that `baseCommit` does not already contain.
+ *
+ * `worktreeStatus` sees only *uncommitted* work, so a job (or a human) that
+ * committed inside the worktree leaves a tree git calls clean while the branch
+ * holds the entire output. Removing it then runs `git branch -D`, and those
+ * commits become unreachable. Every caller that deletes must consult this too.
+ *
+ * `null` means "could not tell" and is treated as "has commits" by callers, for
+ * the same reason `worktreeStatus` returns `null` rather than `0`.
+ */
+export function worktreeCommitsAhead(path: string, baseCommit: string): number | null {
+  if (!existsSync(path)) return 0
+  if (!baseCommit) return null
+  try {
+    const res = spawnSync('git', ['rev-list', '--count', `${baseCommit}..HEAD`], {
+      cwd: path,
+      encoding: 'utf8',
+      timeout: 5000,
+    })
+    if (res.status !== 0) return null
+    const n = Number.parseInt(res.stdout.trim(), 10)
+    return Number.isFinite(n) ? n : null
+  } catch {
+    return null
+  }
+}

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 
 import type { EffectiveConfig, JobRow, JobStateFile } from '../contract/types.js'
-import { removeJobWorktree, worktreeStatus } from '../workspace/worktree.js'
+import { removeJobWorktree, worktreeCommitsAhead, worktreeStatus } from '../workspace/worktree.js'
 import { jobPaths, readJsonIfExists } from '../contract/paths.js'
 import { readLinesFrom } from '../events/cursor.js'
 import { okEvents, parseEventLines } from '../events/parse.js'
@@ -398,10 +398,23 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
 
   // on_finish: 'remove' removes clean worktrees automatically, but keeps dirty
   // ones and warns rather than silently destroying unmerged work.
+  // A branch ahead of its base is the same thing as a dirty tree here: work the
+  // caller has not merged. The gate denies the commit verbs on a worktree job
+  // (`WORKTREE_DENY`), so this catches a human committing in the tree by hand,
+  // and any future hole in that list.
+  const worktreeAhead = config?.worktree
+    ? worktreeCommitsAhead(config.worktree.path, config.worktree.base_commit)
+    : 0
   if (config?.worktree && config.on_finish === 'remove') {
     if (result.verification.changed_files.length > 0) {
       result.verification.warnings.push(
         `worktree at ${config.worktree.path} has uncommitted changes and was kept despite on_finish: "remove"`,
+      )
+    } else if (worktreeAhead !== 0) {
+      result.verification.warnings.push(
+        worktreeAhead === null
+          ? `worktree at ${config.worktree.path} was kept despite on_finish: "remove" — git would not say whether ${config.worktree.branch} carries unmerged commits`
+          : `worktree at ${config.worktree.path} was kept despite on_finish: "remove" — ${config.worktree.branch} carries ${worktreeAhead} unmerged commit(s)`,
       )
     }
   }
@@ -409,7 +422,7 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
   writeBrokerResult(paths, result)
 
   if (config?.worktree && config.on_finish === 'remove') {
-    if (result.verification.changed_files.length === 0) {
+    if (result.verification.changed_files.length === 0 && worktreeAhead === 0) {
       try {
         removeJobWorktree({
           root: store.paths.root,
@@ -502,7 +515,8 @@ export function cleanupOldJobs(store: Store, maxAgeMs: number): number {
         // is far worse than leaving a directory on disk, and
         // `agy_capabilities.worktrees` reports whatever stays.
         const changedCount = worktreeStatus(config.worktree.path)
-        if (changedCount === 0) {
+        const ahead = worktreeCommitsAhead(config.worktree.path, config.worktree.base_commit)
+        if (changedCount === 0 && ahead === 0) {
           removeJobWorktree({
             root: store.paths.root,
             path: config.worktree.path,

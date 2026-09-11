@@ -9,7 +9,7 @@ import type { EffectivePolicy, JobRow } from '../../../src/contract/types.js'
 import { decide } from '../../../src/gate/gate.js'
 import { EMPTY_CEILING } from '../../../src/policy/ceiling.js'
 import { resolvePolicy } from '../../../src/policy/profiles.js'
-import { createJobWorktree, removeJobWorktree, worktreeStatus } from '../../../src/workspace/worktree.js'
+import { createJobWorktree, removeJobWorktree, worktreeCommitsAhead, worktreeStatus } from '../../../src/workspace/worktree.js'
 
 let hasGit = false
 try {
@@ -245,6 +245,29 @@ describe('createJobWorktree and removeJobWorktree', () => {
 
     expect(worktreeStatus(join(tempDir, 'never-existed'))).toBe(0)
   })
+
+  /**
+   * The hole `worktreeStatus` cannot see: a commit makes the tree clean while
+   * the branch holds the work, and every removal path ends in `git branch -D`.
+   */
+  it.skipIf(!hasGit)('counts commits the base does not have, which git status calls clean', () => {
+    const creation = createJobWorktree({ root: repo, jobId: 'ahead-job', baseRef: 'HEAD', linkPaths: [] })
+    expect(worktreeCommitsAhead(creation.path, creation.base_commit)).toBe(0)
+
+    writeFileSync(join(creation.path, 'work.txt'), 'work\n')
+    runGit(creation.path, ['add', 'work.txt'])
+    runGit(creation.path, ['commit', '-m', 'job work'])
+
+    expect(worktreeStatus(creation.path)).toBe(0)
+    expect(worktreeCommitsAhead(creation.path, creation.base_commit)).toBe(1)
+
+    // Same rule as `worktreeStatus`: unanswerable is not zero.
+    const notARepository = join(tempDir, 'not-a-repository-either')
+    mkdirSync(notARepository, { recursive: true })
+    expect(worktreeCommitsAhead(notARepository, creation.base_commit)).toBeNull()
+
+    removeJobWorktree({ root: repo, path: creation.path, branch: creation.branch, force: true })
+  })
 })
 
 /**
@@ -276,6 +299,7 @@ describe('worktree isolation, decided by the gate', () => {
       workspace: creation.path,
       ceiling: { ...EMPTY_CEILING, present: true, version: 2, link_paths: ['node_modules'] },
       linkedRoots: creation.linkedRoots,
+      isolation: 'worktree',
     })
   }
 
@@ -348,6 +372,39 @@ describe('worktree isolation, decided by the gate', () => {
     // A job that could add or remove worktrees could move its own workspace out
     // from under the gate.
     expect(verdict(policy, 'run_command', { CommandLine: 'git worktree add /tmp/elsewhere', Cwd: creation.path })).toBe('deny')
+
+    removeJobWorktree({ root: repo, path: creation.path, branch: creation.branch, force: true })
+  })
+
+  /**
+   * A committing job would leave a tree `git status` calls clean, and both
+   * `on_finish: "remove"` and `agy_release_workspace` delete the branch from
+   * there. The commit verbs are unioned in after the ceiling's `exceptions`,
+   * so a project cannot open them for a worktree job either.
+   */
+  it.skipIf(!hasGit)('denies the commit verbs on a worktree job, and a ceiling exception cannot lift them', () => {
+    const creation = createJobWorktree({ root: repo, jobId: 'commit-job', baseRef: 'HEAD', linkPaths: [] })
+
+    const lifted = resolvePolicy({
+      profile: 'general_worker',
+      workspace: creation.path,
+      ceiling: { ...EMPTY_CEILING, present: true, version: 2, exceptions: ['command(git commit)'] },
+      isolation: 'worktree',
+    })
+    for (const command of ['git commit -m x', 'git merge other', 'git rebase main', 'git stash']) {
+      expect(verdict(lifted, 'run_command', { CommandLine: command, Cwd: creation.path })).toBe('deny')
+    }
+    // Reading history is still the job's business.
+    expect(verdict(lifted, 'run_command', { CommandLine: 'git status', Cwd: creation.path })).toBe('allow')
+
+    // An in-place job is unaffected: committing its own work is between it and
+    // the project's own ceiling.
+    const inPlace = resolvePolicy({
+      profile: 'general_worker',
+      workspace: creation.path,
+      ceiling: { ...EMPTY_CEILING, present: true, version: 2 },
+    })
+    expect(verdict(inPlace, 'run_command', { CommandLine: 'git commit -m x', Cwd: creation.path })).toBe('allow')
 
     removeJobWorktree({ root: repo, path: creation.path, branch: creation.branch, force: true })
   })

@@ -187,8 +187,33 @@ export function getProfile(name: string): ProfileDef {
   return def
 }
 
+/**
+ * Denied on top of the profile for a job running with `isolation: "worktree"`,
+ * and unliftable: these are unioned in *after* the ceiling's `exceptions`, so
+ * no project can open them for a worktree job.
+ *
+ * A worktree branch is a proposal the caller merges — `workspace.committed` is
+ * typed `false`, and both `on_finish: "remove"` and `agy_release_workspace`
+ * decide from uncommitted changes. A job that committed would leave a tree git
+ * calls clean, and the removal that follows runs `git branch -D` over the
+ * commits. Cheaper to deny the verbs than to make a committing job safe.
+ */
+export const WORKTREE_DENY: readonly string[] = [
+  'command(git commit)',
+  'command(git merge)',
+  'command(git rebase)',
+  'command(git cherry-pick)',
+  'command(git revert)',
+  'command(git stash)',
+]
+
 export interface ResolvePolicyInput {
   profile: Profile
+  /**
+   * `'worktree'` adds {@link WORKTREE_DENY} to the deny list. Defaults to
+   * `'in_place'`, which changes nothing.
+   */
+  isolation?: 'in_place' | 'worktree'
   /** Canonical workspace. Becomes the read/write root and the forced `Cwd`. */
   workspace: string
   requested?: RequestedPermissions
@@ -280,6 +305,7 @@ export function resolvePolicy(input: ResolvePolicyInput): EffectivePolicy {
       ...hardDeny,
       ...ceiling.deny.map(substitute),
       ...(input.requested?.deny ?? []),
+      ...(input.isolation === 'worktree' ? WORKTREE_DENY : []),
     ]),
   )
 

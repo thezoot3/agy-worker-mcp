@@ -184,6 +184,22 @@ What remains, by design or as a known limit:
 
 The general lesson stands: a new shell construct is a new hole until the parser rejects it.
 
+### What a worktree job may not do
+
+On top of its profile, an `isolation: "worktree"` job is denied `git commit`,
+`git merge`, `git rebase`, `git cherry-pick`, `git revert` and `git stash`
+(`WORKTREE_DENY`, `src/policy/profiles.ts`). These are unioned in *after* the
+ceiling's `exceptions`, so unlike every other profile deny they cannot be
+lifted by a project.
+
+The reason is not that committing is dangerous but that it is invisible: a
+commit makes `git status` report a clean tree, and both `on_finish: "remove"`
+and `agy_release_workspace` decide from that status before running
+`git branch -D`. A job that committed would look finished-and-empty, and its
+whole output would go with the branch. The branch is a proposal; the caller
+merges it. (Both removal paths check for unmerged commits as well, which is
+what catches a *human* committing in the tree by hand.)
+
 ### The repository a worktree came from
 
 A `isolation: "worktree"` job's workspace is the worktree, so the base

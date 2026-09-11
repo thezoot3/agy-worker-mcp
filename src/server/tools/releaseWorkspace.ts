@@ -6,7 +6,7 @@ import { ValidationError } from '../../contract/errors.js'
 import { jobPaths, readJsonIfExists } from '../../contract/paths.js'
 import type { EffectiveConfig } from '../../contract/types.js'
 import { LIVE_LIFECYCLES, tryGetJob } from '../../store/jobs.js'
-import { removeJobWorktree, worktreeStatus } from '../../workspace/worktree.js'
+import { removeJobWorktree, worktreeCommitsAhead, worktreeStatus } from '../../workspace/worktree.js'
 import { errorReply, reply, type ToolContext, type ToolReply } from '../context.js'
 
 /**
@@ -67,6 +67,25 @@ export async function handleReleaseWorkspace(
       // tool deletes a directory, and the one thing worse than refusing a
       // release is granting one that throws away work nobody merged.
       const changedCount = worktreeStatus(wt.path)
+      // Unmerged *commits* are invisible to `git status`, and the removal below
+      // ends in `git branch -D`. A branch ahead of its base is therefore refused
+      // on exactly the same terms as a dirty tree.
+      const ahead = worktreeCommitsAhead(wt.path, wt.base_commit)
+      if (changedCount === 0 && ahead !== 0 && !input.force) {
+        throw new ValidationError(
+          {
+            field: 'force',
+            value: input.force,
+            expected:
+              ahead === null
+                ? `a branch git can compare against ${wt.base_commit} — merge ${wt.branch} first, or pass force: true to delete it regardless`
+                : `a merged branch — ${wt.branch} carries ${ahead} commit(s) not in ${wt.base_commit}. Merge it first, or pass force: true to delete them`,
+          },
+          ahead === null
+            ? `cannot tell whether ${wt.branch} carries unmerged commits`
+            : `branch ${wt.branch} carries ${ahead} unmerged commit(s)`,
+        )
+      }
       if (changedCount !== 0 && !input.force) {
         throw new ValidationError(
           {

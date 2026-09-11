@@ -481,6 +481,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
         maxDenials: input.max_denials ?? null,
         ceiling,
         linkedRoots,
+        isolation,
       })
 
       validateWriteRoots(policy.write_roots, gatePath)

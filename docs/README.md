@@ -1,6 +1,6 @@
 # Documentation
 
-- [`tools.md`](./tools.md) — the ten MCP tools, parameter by parameter, plus
+- [`tools.md`](./tools.md) — the eleven MCP tools, parameter by parameter, plus
   the result vocabulary (`outcome`, `contract_status`, the judgement packet).
 - [`permissions.md`](./permissions.md) — the three-owner permission model
   (code, the project's own ceiling file, the parent agent's request), the

@@ -1,4 +1,4 @@
-> **Important — under active development (0.3.x).** The permission model is a string classifier over
+> **Important — under active development (0.4.x).** The permission model is a string classifier over
 > tool calls — the same kind of boundary Claude Code and Codex use, not a kernel
 > boundary. Allowed shell commands run **without** an OS sandbox by default since 0.2.1
 > (can be enabled with `sandbox: "seatbelt"`). What the gate deliberately does not
@@ -216,8 +216,10 @@ puts the job in a fresh git worktree at `<root>/.worktrees/agy-<job_id>`, on
 branch `agy/<job_id>`. Two jobs on one repository stop fighting over one tree,
 and you can read a job's work before deciding to take it.
 
-The job **cannot commit** — the ceiling denies `git add` and `git commit` — so
-the branch is a proposal, not a fact. You merge it:
+The job **cannot commit** — on a worktree job the gate denies `git commit`,
+`git merge`, `git rebase`, `git cherry-pick`, `git revert` and `git stash`, and
+no ceiling can lift them — so the branch is a proposal, not a fact. You merge
+it:
 
 ```bash
 git merge --squash agy/<job_id>
@@ -238,9 +240,10 @@ ceiling key with no request field: a link is a read-root widening, and that is
 yours to decide.
 
 `agy_capabilities.worktrees` lists worktrees still on disk. `on_finish:
-"remove"` cleans up automatically, but only when the worktree is clean — the
-default is `keep`, because deleting an unmerged worktree destroys the job's
-entire output.
+"remove"` cleans up automatically, but only when the worktree is clean *and*
+its branch carries nothing the base does not already have — the default is
+`keep`, because removal ends in `git branch -D` and deleting an unmerged
+worktree destroys the job's entire output.
 
 ## Permissions
 
@@ -309,7 +312,7 @@ cp "$(npm root -g)/agy-worker-mcp/commands/agy-ceiling.md" .claude/commands/
 
 ## Documentation
 
-- [`docs/tools.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/tools.md) — the ten tools, parameter by parameter,
+- [`docs/tools.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/tools.md) — the eleven tools, parameter by parameter,
   and the result vocabulary
 - [`docs/permissions.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/permissions.md) — the three-owner permission
   model, the ceiling file, the gate's decision order, containment,

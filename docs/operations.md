@@ -190,8 +190,9 @@ The full sequence:
 is no scheduled cleanup — like everything else here, it happens on a tool call.
 
 A worktree job's tree outlives its job directory unless somebody removes it.
-The same sweep takes a worktree with it **only when git says the tree is
-clean**; a dirty one, or one whose status git will not report, is left where it
+The same sweep takes a worktree with it **only when git says the tree is clean
+and its branch carries nothing the base lacks**; a dirty one, one holding
+unmerged commits, or one whose status git will not report, is left where it
 is. Deleting a week-old worktree that still holds unmerged work is far worse
 than leaving a directory on disk, and `agy_capabilities.worktrees` reports
 every one that stays.
