@@ -498,8 +498,8 @@ function readPackageVersion(): string {
 }
 
 /**
- * Append this job's `usage.jsonl` line (docs/.local/13-usage-and-debug-records.md
- * §2) — the permanent counterpart to the job directory `cleanupOldJobs`
+ * Append this job's `usage.jsonl` line (docs/operations.md, "The usage log")
+ * — the permanent counterpart to the job directory `cleanupOldJobs`
  * eventually deletes. Guarded by `jobs/<id>/usage.stamp` so a job can never
  * contribute two lines, and by `AGY_WORKER_USAGE=off` for anyone who wants
  * the file gone entirely.

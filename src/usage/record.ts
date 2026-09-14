@@ -7,8 +7,8 @@ import { redactText } from '../report/redact.js'
 import type { JobDigest } from '../trace/digest.js'
 
 /**
- * `L1` — the permanent job-summary log (docs/.local/13-usage-and-debug-records.md
- * §2). Pure record-building lives here alongside the small amount of I/O the
+ * The permanent job-summary log (docs/operations.md, "The usage log").
+ * Pure record-building lives here alongside the small amount of I/O the
  * layer needs; the pure core (`buildUsageRecord`) is the part worth testing
  * without touching disk, matching how `trace/digest.ts` and
  * `policy/seatbelt.ts` are split.
@@ -46,8 +46,8 @@ const MAX_RULE_CHARS = 240
 /**
  * The one place a string from the run itself is allowed into `usage.jsonl`.
  *
- * `required_rule` and `remedy` are the exception to §2's "enums and rule
- * strings only": a denied command line reaches the first verbatim, and a
+ * `required_rule` and `remedy` are the exception to this file's "enums and
+ * rule strings only" rule: a denied command line reaches the first verbatim, and a
  * blocker's remedy can name an absolute path (`blockers.ts` builds "add a
  * glob covering <dir>" and "have the job create <path>"). Since this file is
  * permanent — it deliberately outlives the job directory — a token pasted

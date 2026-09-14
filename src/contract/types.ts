@@ -89,9 +89,9 @@ export const ENV = {
   /** Scenario file consumed by `test/fake-agy` only; never read by src/. */
   FAKE_SCENARIO: 'AGY_FAKE_SCENARIO',
   /**
-   * Set to `off` to stop `usage.jsonl` accounting entirely (docs/.local/
-   * 13-usage-and-debug-records.md §2). Default is on: the file never leaves
-   * the machine, so this is local housekeeping, not telemetry.
+   * Set to `off` to stop `usage.jsonl` accounting entirely (docs/operations.md,
+   * "The usage log"). Default is on: the file never leaves the machine, so this
+   * is local housekeeping, not telemetry.
    */
   USAGE: 'AGY_WORKER_USAGE',
 } as const
@@ -1163,7 +1163,7 @@ export interface BrokerResult {
  * distilled from is deleted after seven days, but this line is not — it only
  * rotates at a size cap (see `appendUsage`, `src/usage/record.ts`). That is
  * also why it is deliberately thin: no prompt text, no file paths, no command
- * strings, no response text (docs/.local/13-usage-and-debug-records.md §2).
+ * strings, no response text (docs/operations.md).
  * What survives is rule strings (`command(npx vitest)`, already the
  * vocabulary `agy_ceiling` reads) and enums. The two rule-shaped fields are
  * built out of the run and so pass through the report's own scrubber first

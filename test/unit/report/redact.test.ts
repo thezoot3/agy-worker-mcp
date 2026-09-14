@@ -1,6 +1,6 @@
 /**
- * §4 of docs/.local/13-usage-and-debug-records.md is the spec: this is the
- * only place a job log's raw text is allowed to reach an HTML report, so
+ * The scrubber every reported string passes through: this is the only place a
+ * job log's raw text is allowed to reach an HTML report, so
  * every pattern gets a positive and a near-miss case, and idempotence is
  * pinned down directly rather than trusted to eyeballing the regexes.
  */

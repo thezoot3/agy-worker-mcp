@@ -15,6 +15,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import { packageRoot, stateHome } from '../contract/paths.js'
+import { parseReportArgs, type ReportOptions } from '../report/report.js'
 import { writeLauncher } from './launcher.js'
 import type { DoctorOptions } from './doctor.js'
 
@@ -268,9 +269,20 @@ export type ParsedSetupArgs =
   | { kind: 'help' }
   | { kind: 'error'; message: string }
   | { kind: 'doctor'; options: DoctorOptions }
+  | { kind: 'report'; options: ReportOptions }
   | { kind: 'run'; options: SetupOptions }
 
 export function parseSetupArgs(argv: string[], cwd: string = process.cwd()): ParsedSetupArgs {
+  // `-h`/`--help` wins outright, and `--report` opens a vocabulary
+  // (`--job`, `--since`, …) this function's own flag loop below knows
+  // nothing about — mixing the two loops would make report flags fail as
+  // "unknown argument" and vice versa, so report parsing is delegated whole.
+  if (argv.includes('-h') || argv.includes('--help')) return { kind: 'help' }
+  if (argv.includes('--report')) {
+    const parsed = parseReportArgs(argv, cwd)
+    return parsed.kind === 'error' ? parsed : { kind: 'report', options: parsed.options }
+  }
+
   let isDoctor = false
   const options: SetupOptions = { scope: 'user', client: 'all', link: false, cwd, dryRun: false, force: false }
 
@@ -329,6 +341,7 @@ export function parseSetupArgs(argv: string[], cwd: string = process.cwd()): Par
 export function usage(): string {
   return [
     'usage: agy-worker-setup [--scope project|user] [--client claude|codex|all] [--link] [--dest <dir>] [--doctor] [--dry-run] [--force]',
+    '       agy-worker-setup --report [--job <id> | --last <N> | --since <30m|12h|7d>] [--out <path>] [--open] [--include-prompt] [--redact default|strict]',
     '',
     'Installs the spawn-time launcher to <stateHome>/bin/agy-worker-mcp, and copies or symlinks',
     'the agy-ceiling skill and slash command for Claude Code and Codex.',
@@ -343,6 +356,15 @@ export function usage(): string {
     '  --force                Overwrite existing files instead of skipping',
     '',
     'Prints MCP server registration commands without modifying client config files.',
+    '',
+    '--report generates a self-contained HTML usage and debug report:',
+    '  --job <id>             Job mode: one job\'s full bug-report bundle, in one HTML file',
+    '  --last <N>             Project mode: cap the window to the last N jobs (default: 100)',
+    '  --since <30m|12h|7d>   Project mode: only jobs at or after this long ago; combines with --last',
+    '  --out <path>           Output path (default: ./agy-worker-report-<timestamp|job-id>.html)',
+    '  --open                 Best-effort open in the OS default browser after writing',
+    '  --include-prompt       Include the prompt and full agent response text (excluded by default)',
+    '  --redact default|strict  Secret-scrubbing strength (default: default)',
     '',
   ].join('\n')
 }

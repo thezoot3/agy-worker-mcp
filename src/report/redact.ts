@@ -1,6 +1,6 @@
 /**
  * The single choke point for every string that reaches an HTML report
- * (docs/.local/13-usage-and-debug-records.md §4). A report is built out of
+ * (docs/operations.md). A report is built out of
  * job logs, and job logs contain whatever the agent read or ran — file
  * contents, command output, environment variables it happened to print. None
  * of that has been vetted for secrets or for HTML meaning, so nothing from

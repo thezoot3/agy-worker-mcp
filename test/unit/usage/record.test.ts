@@ -1,6 +1,6 @@
 /**
  * `src/usage/record.ts` — the permanent `usage.jsonl` layer
- * (docs/.local/13-usage-and-debug-records.md §2).
+ * (docs/operations.md).
  *
  * Covers the pure core (`buildUsageRecord`, including the privacy trim on
  * `denials`/`blockers`) and the small amount of I/O around it: rotation, the

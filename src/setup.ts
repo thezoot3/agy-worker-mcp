@@ -7,6 +7,7 @@
  */
 import { doctor } from './setup/doctor.js'
 import { install, parseSetupArgs, usage } from './setup/install.js'
+import { runReport } from './report/report.js'
 
 const parsed = parseSetupArgs(process.argv.slice(2))
 if (parsed.kind === 'help') {
@@ -21,6 +22,12 @@ if (parsed.kind === 'doctor') {
   const report = doctor(parsed.options)
   process.stdout.write(report.text)
   process.exit(report.ok ? 0 : 1)
+}
+if (parsed.kind === 'report') {
+  const result = runReport(parsed.options)
+  process.stdout.write(result.ok ? result.text : '')
+  if (!result.ok) process.stderr.write(result.text)
+  process.exit(result.ok ? 0 : 1)
 }
 const report = install(parsed.options)
 process.stdout.write(report.text)

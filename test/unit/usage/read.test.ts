@@ -1,6 +1,6 @@
 /**
  * `src/usage/read.ts` — the reading side of the permanent `usage.jsonl` layer
- * (docs/.local/13-usage-and-debug-records.md §2).
+ * (docs/operations.md).
  *
  * The two things worth pinning down: a file several processes append to and a
  * power cut can tear must never take the reader down with it, and the roll-up
