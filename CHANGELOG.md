@@ -4,7 +4,7 @@ All notable changes to agy-worker-mcp. Dates are the day the version landed on
 `main`. Measurements against the real `agy` CLI are noted with the agy version
 they were taken on.
 
-## 0.4.0 — 2026-09-11
+## 0.4.0 — 2026-09-14
 
 The release that makes installing it and running the first job boring, and gives
 a job somewhere of its own to work.
