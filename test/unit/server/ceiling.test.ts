@@ -3,6 +3,8 @@
  * and `agy_start` permissions sandbox handling (`src/server/tools/start.ts`).
  */
 import { writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { CeilingReply } from '../../../src/contract/types.js'
@@ -16,12 +18,27 @@ function replyJson<T = Record<string, unknown>>(reply: { content: Array<{ type: 
   return JSON.parse(reply.content[0]!.text) as T
 }
 
+/**
+ * `handleStart` resolves the agy executable before it can return even a
+ * `dry_run` reply, so a machine without agy on its PATH — every CI runner —
+ * would get an error reply from a test that is about policy resolution and
+ * has nothing to say about which binary is installed. Pointing
+ * `AGY_WORKER_AGY_BIN` at the fake binary the integration suite already uses
+ * (`test/integration/helpers.ts`) is what makes this suite hermetic; nothing
+ * here ever spawns it.
+ */
+const FAKE_AGY = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fake-agy', 'agy.mjs')
+
 describe('agy_ceiling and permissions.sandbox tool handlers', () => {
   let handle: TestStoreHandle
   let ctx: ToolContext
 
+  let prevAgyBin: string | undefined
+
   beforeEach(() => {
     handle = makeTestStore()
+    prevAgyBin = process.env.AGY_WORKER_AGY_BIN
+    process.env.AGY_WORKER_AGY_BIN = FAKE_AGY
     ctx = {
       store: handle.store,
       paths: handle.store.paths,
@@ -31,6 +48,8 @@ describe('agy_ceiling and permissions.sandbox tool handlers', () => {
   })
 
   afterEach(() => {
+    if (prevAgyBin === undefined) delete process.env.AGY_WORKER_AGY_BIN
+    else process.env.AGY_WORKER_AGY_BIN = prevAgyBin
     handle.cleanup()
   })
 
