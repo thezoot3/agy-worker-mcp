@@ -108,6 +108,9 @@ const BOOL_FLAGS = new Set([
 
 const PROMPT_FLAGS = new Set(['print', 'prompt', 'p'])
 
+/** What this fake answers `--version` with. Shaped like a real agy version, never equal to one. */
+const FAKE_AGY_VERSION = '1.1.27-fake'
+
 /**
  * Parse argv the way agy does, including its two measured failure modes.
  *
@@ -768,6 +771,16 @@ function turnTextFrom(ctx, line) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function main(argv) {
+  // `agy --version` is probed once per server process (`agyVersion`,
+  // src/runner/spawn.ts) and stamped onto every job so a regression can be
+  // tied to an agy build. Answering it here keeps every `agy_start` in the
+  // suite from spending a failing subprocess on the probe, and lets a test
+  // assert on what ends up in `usage.jsonl`.
+  if (argv.includes('--version')) {
+    process.stdout.write(`${FAKE_AGY_VERSION}\n`)
+    process.exit(0)
+  }
+
   const opts = parseArgv(argv)
 
   // Measured against agy 1.1.23: a command-line prompt and

@@ -29,7 +29,7 @@ import { getProfile, resolvePolicy } from '../../policy/profiles.js'
 import { evaluateCommandPolicy, firstMatchForDenial, parseRulesLenient } from '../../policy/rules.js'
 import { hooksFilePath } from '../../gate/hooks-file.js'
 import { appendUserTurn } from '../../runner/inbox.js'
-import { buildAgyArgv, buildChildEnv, resolveAgyBin } from '../../runner/spawn.js'
+import { agyVersion, buildAgyArgv, buildChildEnv, resolveAgyBin } from '../../runner/spawn.js'
 import { acquireJobLocks } from '../../store/locks.js'
 import { createJob, listJobs, LIVE_LIFECYCLES } from '../../store/jobs.js'
 import { createSession, getSession } from '../../store/sessions.js'
@@ -590,6 +590,7 @@ export async function handleStart(ctx: ToolContext, input: StartInput): Promise<
         verify,
         argv,
         agy_bin: agyBin,
+        agy_version: agyVersion(),
         env,
         created_at: now,
         worktree: worktreeConfig,

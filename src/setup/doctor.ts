@@ -7,14 +7,13 @@
  * Doctor runs structured diagnostic checks and prints clear fixes on failure.
  */
 
-import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
 import { packageRoot, projectPaths, resolveProjectRoot, stateHome } from '../contract/paths.js'
 import { ceilingPath, loadCeiling } from '../policy/ceiling.js'
-import { resolveAgyBin } from '../runner/spawn.js'
+import { agyVersion, resolveAgyBin } from '../runner/spawn.js'
 
 export interface DoctorCheck {
   id: string
@@ -254,15 +253,12 @@ export function doctor(options?: DoctorOptions): DoctorReport {
   // Check 4: agy binary is resolvable; report its version
   try {
     const agyBin = resolveAgyBin(env)
-    let agyVersion = ''
-    try {
-      agyVersion = execFileSync(agyBin, ['--version'], { encoding: 'utf8', timeout: 2000 }).trim()
-    } catch {}
+    const version = agyVersion(env)
     checks.push({
       id: 'agy_binary',
       name: 'agy binary',
       ok: true,
-      message: agyVersion ? `Resolved at ${agyBin} (version ${agyVersion})` : `Resolved at ${agyBin}`,
+      message: version ? `Resolved at ${agyBin} (version ${version})` : `Resolved at ${agyBin}`,
     })
   } catch (err) {
     checks.push({

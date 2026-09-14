@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type StdioOptions } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess, type StdioOptions } from 'node:child_process'
 import { accessSync, chmodSync, closeSync, constants, openSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
@@ -246,6 +246,40 @@ export function resolveAgyBin(baseEnv: NodeJS.ProcessEnv = process.env): string 
   throw new Error(
     `agy binary not found; searched PATH and known locations:\n  ${locations.join('\n  ')}`,
   )
+}
+
+/**
+ * Process-lifetime cache for {@link agyVersion}. `undefined` means "not probed
+ * yet"; `null` is a cached failure, which is still worth remembering — a
+ * missing or broken `agy` does not start answering `--version` later in the
+ * same process.
+ */
+let cachedAgyVersion: string | null | undefined
+
+/**
+ * `agy --version`, probed once and cached for the life of the process.
+ *
+ * The spawn path runs on every `agy_start`, and the binary a running process
+ * has resolved cannot change under it, so there is nothing to gain — and
+ * `resolveAgyBin` plus a subprocess spawn to lose — from asking again per job.
+ * Two seconds is generous for a CLI whose only job here is to print its own
+ * version string; any failure (not found, non-zero exit, timeout) reads as
+ * "unknown" rather than as a reason to refuse the job.
+ */
+export function agyVersion(baseEnv: NodeJS.ProcessEnv = process.env): string | null {
+  if (cachedAgyVersion !== undefined) return cachedAgyVersion
+  try {
+    const bin = resolveAgyBin(baseEnv)
+    cachedAgyVersion = execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 2000 }).trim()
+  } catch {
+    cachedAgyVersion = null
+  }
+  return cachedAgyVersion
+}
+
+/** Test-only: clears the process-lifetime cache so a test can probe a fresh binary. */
+export function resetAgyVersionCacheForTests(): void {
+  cachedAgyVersion = undefined
 }
 
 export interface SpawnAgyOptions {

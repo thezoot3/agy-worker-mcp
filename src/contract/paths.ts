@@ -7,11 +7,12 @@
  * ```
  * ~/.agy-worker/projects/<sha256(canonical_root)[:16]>/
  *     project.json  index.db
+ *     usage.jsonl  (permanent job-summary log; rotates to usage.1.jsonl at 5MiB)
  *     jobs/<job-id>/{request,effective-config,state}.json
  *                   events.ndjson stderr.log exit_code
  *                   inbox.jsonl policy.json gate-log.jsonl
  *                   agent-result.json broker-result.json verification.json
- *                   verify.log verify.json
+ *                   verify.log verify.json  usage.stamp
  * ```
  */
 
@@ -191,6 +192,12 @@ export interface ProjectPaths {
   projectJson: string
   db: string
   jobsDir: string
+  /**
+   * `<dir>/usage.jsonl` — one line per finished job, kept after
+   * `cleanupOldJobs` deletes the job directory it was distilled from. See
+   * `UsageRecord` (`contract/types.ts`) and `appendUsage` (`usage/record.ts`).
+   */
+  usageLog: string
 }
 
 export function projectPaths(
@@ -209,6 +216,7 @@ export function projectPaths(
     projectJson: join(dir, 'project.json'),
     db: join(dir, 'index.db'),
     jobsDir: join(dir, 'jobs'),
+    usageLog: join(dir, 'usage.jsonl'),
   }
 }
 

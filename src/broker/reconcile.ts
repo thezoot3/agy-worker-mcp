@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
-import type { EffectiveConfig, JobRow, JobStateFile } from '../contract/types.js'
+import { ENV, type BrokerResult, type EffectiveConfig, type JobRow, type JobStateFile } from '../contract/types.js'
 import { removeJobWorktree, worktreeCommitsAhead, worktreeStatus } from '../workspace/worktree.js'
-import { jobPaths, readJsonIfExists } from '../contract/paths.js'
+import { jobPaths, packageRoot, readJsonIfExists, type JobPaths } from '../contract/paths.js'
 import { readLinesFrom } from '../events/cursor.js'
 import { okEvents, parseEventLines } from '../events/parse.js'
 import { removeGateHook } from '../gate/hooks-file.js'
@@ -12,6 +14,8 @@ import { now, transaction } from '../store/db.js'
 import { getJob, listJobs, LIVE_LIFECYCLES, tryGetJob, updateJob } from '../store/jobs.js'
 import { listLocks, releaseJobLocks } from '../store/locks.js'
 import { bindConversationId, getSession } from '../store/sessions.js'
+import { loadJobDigest } from '../trace/digest.js'
+import { appendUsage, buildUsageRecord, hasUsageStamp, writeUsageStamp } from '../usage/record.js'
 import { buildBrokerResult, writeBrokerResult } from './result.js'
 
 /**
@@ -421,6 +425,8 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
 
   writeBrokerResult(paths, result)
 
+  recordUsage(store, job, config, result, paths, finishedAt)
+
   if (config?.worktree && config.on_finish === 'remove') {
     if (result.verification.changed_files.length === 0 && worktreeAhead === 0) {
       try {
@@ -471,6 +477,72 @@ function finalizeCore(store: Store, job: JobRow, flags: FinalizeFlags): JobRow {
   removeGateHookIfIdle(store, finalized)
 
   return finalized
+}
+
+/**
+ * Read the installed package's own version for `UsageRecord.env.pkg`.
+ *
+ * Duplicates `readPackageVersion` in `src/server/context.ts` rather than
+ * importing it: `broker/**` is the layer the runner and the server both sit
+ * on top of, and nothing here should reach sideways into `server/**` for one
+ * string. `'0.0.0'` on failure matches that function's own fallback.
+ */
+function readPackageVersion(): string {
+  try {
+    const raw = readFileSync(join(packageRoot(), 'package.json'), 'utf8')
+    const pkg = JSON.parse(raw) as { version?: string }
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
+/**
+ * Append this job's `usage.jsonl` line (docs/.local/13-usage-and-debug-records.md
+ * §2) — the permanent counterpart to the job directory `cleanupOldJobs`
+ * eventually deletes. Guarded by `jobs/<id>/usage.stamp` so a job can never
+ * contribute two lines, and by `AGY_WORKER_USAGE=off` for anyone who wants
+ * the file gone entirely.
+ *
+ * Wrapped in one try/catch around the whole body: this is housekeeping of the
+ * same grade as `removeGateHookIfIdle` below, and a failure to record usage
+ * must never be the reason a job fails to finalize.
+ */
+function recordUsage(
+  store: Store,
+  job: JobRow,
+  config: EffectiveConfig | null,
+  result: BrokerResult,
+  paths: JobPaths,
+  finishedAt: number,
+): void {
+  try {
+    if (process.env[ENV.USAGE] === 'off') return
+    if (hasUsageStamp(paths.dir)) return
+
+    const digest = loadJobDigest(paths.dir, job.cwd)
+    const record = buildUsageRecord({
+      job,
+      config,
+      result,
+      digest,
+      finishedAt,
+      environment: {
+        agyVersion: config?.agy_version ?? null,
+        packageVersion: readPackageVersion(),
+        nodeVersion: process.version,
+        platform: process.platform,
+      },
+      // A denied command line reaches `required_rule` verbatim, so the two
+      // strings that carry run text are rewritten against these before they
+      // are written to a file that outlives the job directory.
+      redaction: { home: homedir(), workspace: job.cwd },
+    })
+    appendUsage(store.paths, record)
+    writeUsageStamp(paths.dir)
+  } catch {
+    // Best effort — see the function comment.
+  }
 }
 
 /**

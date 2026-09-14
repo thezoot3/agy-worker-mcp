@@ -88,6 +88,12 @@ export const ENV = {
   JOB_ID: 'AGY_WORKER_JOB_ID',
   /** Scenario file consumed by `test/fake-agy` only; never read by src/. */
   FAKE_SCENARIO: 'AGY_FAKE_SCENARIO',
+  /**
+   * Set to `off` to stop `usage.jsonl` accounting entirely (docs/.local/
+   * 13-usage-and-debug-records.md §2). Default is on: the file never leaves
+   * the machine, so this is local housekeeping, not telemetry.
+   */
+  USAGE: 'AGY_WORKER_USAGE',
 } as const
 
 /**
@@ -821,6 +827,14 @@ export interface EffectiveConfig {
   argv: string[]
   /** Absolute path of the executable being spawned. */
   agy_bin: string
+  /**
+   * `agy --version`, probed once per server process (`agyVersion`,
+   * `src/runner/spawn.ts`) and stamped onto every job so a later regression
+   * can be tied to the agy build that produced it. Null when the probe
+   * failed — resolving `agy_bin` successfully is no guarantee `--version`
+   * does.
+   */
+  agy_version: string | null
   /** Allowlisted environment passed to the child. */
   env: Record<string, string>
   created_at: number
@@ -1137,6 +1151,74 @@ export interface BrokerResult {
   /** Raw structured output when `--json-schema` was used; preserved even if invalid. */
   structured_output: unknown
   finalized_at: number
+}
+
+/**
+ * One line of `~/.agy-worker/projects/<key>/usage.jsonl` — a permanent,
+ * privacy-scoped summary of one finished job. Appended once by `finalizeCore`
+ * (`src/broker/reconcile.ts`), right after `writeBrokerResult`, guarded by
+ * `jobs/<id>/usage.stamp` so the same job never contributes two lines.
+ *
+ * This is the layer that outlives `cleanupOldJobs`: the job directory this is
+ * distilled from is deleted after seven days, but this line is not — it only
+ * rotates at a size cap (see `appendUsage`, `src/usage/record.ts`). That is
+ * also why it is deliberately thin: no prompt text, no file paths, no command
+ * strings, no response text (docs/.local/13-usage-and-debug-records.md §2).
+ * What survives is rule strings (`command(npx vitest)`, already the
+ * vocabulary `agy_ceiling` reads) and enums. The two rule-shaped fields are
+ * built out of the run and so pass through the report's own scrubber first
+ * (see `denials` below); everything else is drawn from a fixed vocabulary.
+ * Anything with more detail belongs in the job directory this is a shadow of.
+ */
+export interface UsageRecord {
+  /** Schema version. A shape change bumps this and documents a reader migration; it is never edited in place. */
+  v: 1
+  /** `finalizeCore`'s `finishedAt`, epoch ms. */
+  ts: number
+  job_id: string
+  session_id: string | null
+  profile: Profile
+  model: string | null
+  effort: string | null
+  session_mode: SessionMode
+  isolation: 'in_place' | 'worktree'
+  /** Null only when no `effective-config.json` could be read at all. */
+  sandbox: SandboxMode | null
+  on_denial: OnDenial
+  outcome: Outcome
+  contract_status: ContractStatus
+  agent_status: AgentStatus
+  exit_code: number | null
+  duration_ms: number | null
+  /** `started_at - created_at`, or null when the job never reached `started_at`. */
+  queued_ms: number | null
+  counts: BrokerSummary['counts']
+  usage: AgyUsage | null
+  files: { read: number; edited: number }
+  /**
+   * Top 20 by count (`JobDigest.denials`, sorted descending already). Carries
+   * only `stage` / `required_rule` / `count` — never the `tool` or `command`
+   * fields the digest also has.
+   *
+   * `required_rule` is the one field here built out of the run rather than
+   * chosen from a fixed vocabulary: `requiredRuleFor` spells a command rule as
+   * the whole command line (`src/policy/rules.ts`). It is therefore scrubbed
+   * (`redactText`) and clipped by `buildUsageRecord` before it is written.
+   */
+  denials: Array<{ stage: string; required_rule: string | null; count: number }>
+  /**
+   * Top 20 (`Verification.blockers`). Carries only `source` / `actionable` /
+   * `remedy` — never `message`, `command`, `tool` or `detail`, any of which
+   * can carry verbatim text from the run. `remedy` can still name a path
+   * (`blockers.ts` builds "add a glob covering <dir>"), so it is scrubbed and
+   * clipped alongside `required_rule`.
+   */
+  blockers: Array<{ source: BlockerSource; actionable: boolean; remedy: string | null }>
+  /** `ran: false` when no `verify_command` was requested, or the deadline killed agy before it could run. */
+  verify: { ran: boolean; passed: boolean }
+  workspace: { kind: 'in_place' | 'worktree'; changed_files: number }
+  /** `agy` is null when the version probe failed; the rest are always known. */
+  env: { agy: string | null; pkg: string; node: string; platform: string }
 }
 
 /**
