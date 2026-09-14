@@ -44,7 +44,7 @@ export function detectClass1(step: AgyStepUpdateEvent): DenialClass1 | null {
   const gatePayload = parseGateDenial(message)
 
   let source: DenialClass1['source'] = 'unknown'
-  if (message.startsWith(HOOK_DENIAL_PREFIX)) {
+  if (message.slice(0, HOOK_DENIAL_PREFIX.length).toLowerCase() === HOOK_DENIAL_PREFIX) {
     source = 'gate'
   } else if (su.tool_info?.error !== undefined) {
     source = 'agy'

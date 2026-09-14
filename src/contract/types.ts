@@ -113,7 +113,18 @@ export const FORBIDDEN_AGY_FLAGS: readonly string[] = [
   '--new-project',
 ]
 
-/** agy's own prefix on a hook denial, measured in `.spike/out/run6.events.ndjson`. */
+/**
+ * agy's own prefix on a hook denial, measured in `.spike/out/run6.events.ndjson`
+ * and reproduced in `test/fixtures/jobs/`.
+ *
+ * Compare it case-insensitively (`detect.ts`). agy 1.2.1's binary carries this
+ * sentence in both a lower-case and a capitalised form, and which one reaches
+ * `tool_info.error.message` is agy's business, not ours. Getting it wrong does
+ * not lose the denial — the `GATE_DENIAL_MARKER` payload is parsed out of the
+ * same string either way — but it would attribute our own gate's refusal to
+ * agy's engine, and an `agy_engine` blocker on a current job is exactly the
+ * signal we tell callers to treat as a regression.
+ */
 export const HOOK_DENIAL_PREFIX = 'tool call denied by pre-tool hook:'
 
 /**

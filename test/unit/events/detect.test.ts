@@ -72,6 +72,23 @@ describe('detectClass1 — structured refusal', () => {
     expect(c1?.step_idx).toBe(4)
   })
 
+  it('still attributes the denial to the gate when agy capitalises its own prefix', () => {
+    // agy 1.2.1 carries this sentence in both cases. Which one it emits is not
+    // ours to control, and reading a capital T as "agy's engine refused this"
+    // would raise a regression alarm over our own gate doing its job.
+    const capitalised = HOOK_DENIAL_PREFIX[0]!.toUpperCase() + HOOK_DENIAL_PREFIX.slice(1)
+    const step = toolStep({
+      state: 'ERROR',
+      tool_info: {
+        name: 'run_command',
+        parameters: { CommandLine: 'git push origin main' },
+        error: { type: 'TOOL_ERROR', message: `${capitalised} blocked.` },
+      },
+    })
+
+    expect(detectClass1(step)?.source).toBe('gate')
+  })
+
   it('classifies a non-gate tool error as source "agy"', () => {
     const step = toolStep({
       state: 'ERROR',
