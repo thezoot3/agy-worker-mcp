@@ -89,4 +89,32 @@ jobs:
             exit 1
           }
 
-          HOME="$fakehome" AGY_WORKER_HOME="$state" "$prefix/bin/agy-worker-setup" --doctor
+          # `--doctor` reports on the whole environment, and a CI runner is not a
+          # developer's machine: it has no Antigravity CLI to find, and nobody
+          # has run `claude mcp add` in it (`--client claude` prints that
+          # command, it does not run it). Those two checks are expected to fail
+          # here. Everything else it reports is about the installation this job
+          # just performed, so the assertion is that those two are the *only*
+          # failures — a regression in the launcher, the state home, or the
+          # skills still turns this red.
+          set +e
+          doctor="$(HOME="$fakehome" AGY_WORKER_HOME="$state" \
+            "$prefix/bin/agy-worker-setup" --doctor 2>&1)"
+          set -e
+          echo "$doctor"
+
+          # Assert the report exists before asserting things about its contents:
+          # a doctor that died before printing anything has no [FAIL] lines
+          # either, and would otherwise sail through the check below.
+          echo "$doctor" | grep -q '^agy-worker-setup --doctor$' || {
+            echo "--doctor did not produce a report" >&2
+            exit 1
+          }
+
+          unexpected="$(echo "$doctor" | grep '^  \[FAIL\]' \
+            | grep -v 'agy binary' | grep -v 'MCP registration' || true)"
+          if [ -n "$unexpected" ]; then
+            echo "doctor failed a check this job is responsible for:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
