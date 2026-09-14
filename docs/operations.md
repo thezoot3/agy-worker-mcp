@@ -8,10 +8,11 @@ state home, keyed by a hash of the canonical project root:
 ```
 ~/.agy-worker/projects/<sha256(canonical_root)[:16]>/
     project.json  index.db  policy.json
+    usage.jsonl   usage.1.jsonl
     jobs/<job-id>/ request.json  effective-config.json  state.json
                    events.ndjson stderr.log exit_code
                    inbox.jsonl   policy.json  gate-log.jsonl
-                   verify.log    verify.json
+                   verify.log    verify.json  usage.stamp
                    agent-result.json  broker-result.json  verification.json
 ```
 
@@ -196,6 +197,63 @@ unmerged commits, or one whose status git will not report, is left where it
 is. Deleting a week-old worktree that still holds unmerged work is far worse
 than leaving a directory on disk, and `agy_capabilities.worktrees` reports
 every one that stays.
+
+`usage.jsonl` is the one thing that survives the sweep — see below.
+
+## The usage log
+
+Every job that finishes appends one line to
+`~/.agy-worker/projects/<key>/usage.jsonl`, about 600 bytes, written by the
+broker right after `broker-result.json`. It exists because everything else
+here is seven days old: the job directory the sweep deletes is where the
+denial history, the timings and the token counts otherwise live, and
+`agy_ceiling`'s recommendations are only as good as the history still on disk.
+
+A line carries the shape of the job, never its content: profile, model,
+effort, isolation, sandbox, outcome, `contract_status` beside `agent_status`,
+exit code, queue and run durations, the broker's counts, token usage, denied
+rules, blockers, changed-file count, and the agy, package, Node and platform
+versions it ran on. There is no prompt, no response, no file path, no command
+line. The two fields that are built out of the run rather than chosen from a
+fixed vocabulary — a denial's `required_rule` (which `agy` spells as the whole
+command line) and a blocker's `remedy` (which can name a path) — are scrubbed
+for secrets and clipped before they are written.
+
+Lines stay under 4 KiB so that concurrent appends from several server
+processes cannot interleave, and the file rotates once to `usage.1.jsonl` at 5
+MiB, keeping two generations and no more. Nothing about it leaves the machine.
+`AGY_WORKER_USAGE=off` turns it off entirely.
+
+## Reports
+
+```bash
+agy-worker-setup --report                  # the project: last 100 jobs
+agy-worker-setup --report --since 7d
+agy-worker-setup --report --job <job-id>   # one job, for a bug report
+```
+
+Writes one self-contained HTML file and prints its path. No external
+resources of any kind — no CDN, no font, no image URL — so it opens on a
+machine with no network, and no part of a log can leave over one.
+
+The project report is built from `usage.jsonl`: outcome mix, token totals,
+median and p90 duration, a model × outcome table, jobs per day, the failures,
+and — the reason the file exists — the table of denied rules, in the same
+vocabulary `agy_ceiling` reads, so what a project keeps hitting can be taken
+straight to its ceiling.
+
+The job report is the bug-report bundle: the verdict with
+`contract_status` shown against `agent_status`, the blockers split by whether
+a different `agy_start` could lift them, the **whole** gate log including the
+allows (a gate parser bug shows up more often in what was let through than in
+what was stopped), the timeline, the changed files, and the raw logs.
+
+Prompts and agent response text are excluded unless `--include-prompt`.
+Absolute paths under the workspace or your home directory are rewritten,
+recognisable secrets are masked, and `--redact strict` adds long token-shaped
+strings and email addresses. Every report opens by stating what it includes
+and what it leaves out: read it before attaching it to a public issue —
+that sentence is a better safeguard than the pattern list behind it.
 
 ## Tests
 

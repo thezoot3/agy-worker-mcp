@@ -149,6 +149,47 @@ the first two entries.
   verdict — but the warning now says it is the retryable kind, so a caller can
   decide instead of guessing.
 
+### Usage log and reports
+
+- **`usage.jsonl`** — every finished job appends one ~600-byte line to
+  `~/.agy-worker/projects/<key>/usage.jsonl`. Everything this package knew
+  about its own use was seven days old, because the job directory
+  `cleanupOldJobs` deletes is where the denial history, the timings and the
+  token counts lived — and `agy_ceiling`'s recommendations are only as good as
+  the history still on disk. A line carries the shape of a job, never its
+  content: profile, model, effort, isolation, sandbox, outcome,
+  `contract_status` beside `agent_status`, durations, the broker's counts,
+  tokens, denied rules, blockers, and the agy, package, Node and platform
+  versions. No prompt, no response, no file path, no command line. The two
+  fields built out of the run rather than a fixed vocabulary — a denial's
+  `required_rule`, which agy spells as the whole command line, and a blocker's
+  `remedy`, which can name a path — are scrubbed for secrets and clipped
+  before they are written, so a token typed into a denied `curl` does not end
+  up in a file that outlives everything. Lines stay under 4 KiB so concurrent
+  appends from several server processes cannot interleave; the file rotates
+  once at 5 MiB. Nothing leaves the machine, and `AGY_WORKER_USAGE=off` turns
+  it off.
+- **The agy version is recorded per job.** `agy --version` is probed once per
+  server process and stamped onto every `effective-config.json`. Until now
+  `--doctor` was the only thing that ever asked, so no regression could be
+  tied to the build that caused it.
+- **`agy-worker-setup --report`** writes one self-contained HTML file and
+  prints its path. No CDN, no font, no external request of any kind: it opens
+  on a machine with no network, and no log content can leave over one.
+  Project mode (`--last N`, `--since 7d`) reads `usage.jsonl` — outcome mix,
+  tokens, median and p90 duration, model × outcome, jobs per day, failures,
+  and the denied-rule table in the same vocabulary `agy_ceiling` reads.
+  `--job <id>` is the bug-report bundle in place of a tarball: the verdict
+  with `contract_status` shown against `agent_status`, blockers split by
+  whether a different `agy_start` could lift them, the whole gate log
+  including the allows — a gate parser bug shows up more often in what was let
+  through than in what was stopped — the timeline, the changed files and the
+  raw logs. Prompts and response text are excluded unless `--include-prompt`;
+  paths are rewritten, recognisable secrets masked, and `--redact strict` goes
+  further. Every report opens by stating what it contains, because asking a
+  person to read that before attaching the file is a better safeguard than the
+  pattern list behind it.
+
 ### Release
 
 - **CI stages; a human publishes.** The release workflow runs

@@ -310,6 +310,34 @@ cp -R "$(npm root -g)/agy-worker-mcp/skills/agy-ceiling" .claude/skills/
 cp "$(npm root -g)/agy-worker-mcp/commands/agy-ceiling.md" .claude/commands/
 ```
 
+## Reports
+
+Every finished job appends one summary line to
+`~/.agy-worker/projects/<key>/usage.jsonl` — enums, counts, timings, tokens
+and the rules it was denied, with no prompt, no response, no file path and no
+command line in it. It exists because job directories are deleted after seven
+days, and a ceiling recommendation is only as good as the history still on
+disk. Nothing leaves the machine; `AGY_WORKER_USAGE=off` turns it off.
+
+```bash
+agy-worker-setup --report                  # the project: last 100 jobs
+agy-worker-setup --report --job <job-id>   # one job, for a bug report
+```
+
+Both write one self-contained HTML file and print its path — no CDN, no font,
+no external request of any kind, so it opens offline and no log content can
+leave over the network. The project report's centrepiece is the table of
+denied rules, in the same vocabulary `agy_ceiling` reads. The job report is
+the bundle to attach to an issue: the verdict with `contract_status` shown
+against `agent_status`, the blockers split by whether a different `agy_start`
+could lift them, and the whole gate log — the allows included.
+
+Prompts and response text are excluded unless `--include-prompt`; paths are
+rewritten and recognisable secrets masked (`--redact strict` goes further).
+Each report opens by saying what it contains, so you can read that before
+attaching it anywhere. See
+[`docs/operations.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/operations.md#the-usage-log).
+
 ## Documentation
 
 - [`docs/tools.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/tools.md) — the eleven tools, parameter by parameter,
@@ -318,7 +346,7 @@ cp "$(npm root -g)/agy-worker-mcp/commands/agy-ceiling.md" .claude/commands/
   model, the ceiling file, the gate's decision order, containment,
   `verify_command`, denial recovery
 - [`docs/operations.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/docs/operations.md) — state layout, lifecycle, locks,
-  timeouts, retention, test suites
+  timeouts, retention, the usage log and HTML reports, test suites
 - [`CHANGELOG.md`](https://github.com/thezoot3/agy-worker-mcp/blob/main/CHANGELOG.md) — what changed in each version
 
 ## Development
