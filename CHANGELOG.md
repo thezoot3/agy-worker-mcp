@@ -134,6 +134,19 @@ the first two entries.
 - **The workspace is never guessed.** The interpreter rules used to fall back to
   `process.cwd()` when no workspace was passed — a security boundary from a
   default. It fails closed now, and every call site passes the real workspace.
+- **A gate denial is recognised whatever case agy writes it in.** agy 1.2.1
+  carries its "tool call denied by pre-tool hook:" sentence in both a
+  lower-case and a capitalised form; the match was case-sensitive against the
+  lower-case one. The denial itself was never at risk — the machine payload is
+  parsed out of the same string either way — but the capitalised form would
+  have been attributed to agy's own engine rather than to our gate, which is
+  the one attribution callers are told to report as a regression.
+- **The `PreToolUse` contract was re-checked against agy 1.2.1** (docs/permissions.md,
+  "Which agy version this was measured against"). Every field the gate depends
+  on is unchanged. The hook's *failure* semantics — that empty or non-JSON
+  output is a denial — remain measured on 1.1.23 only; a live run on a new agy
+  minor version is what clears them, and the gate watchdog is the backstop
+  until then.
 
 ### Concurrency and reporting
 

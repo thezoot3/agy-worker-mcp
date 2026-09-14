@@ -228,6 +228,39 @@ The PreToolUse hook mechanism has interaction points with external configuration
 - A hook in a user's global `~/.gemini/config/hooks.json` that denies ahead of ours is invisible to us; the watchdog reports it as "gate never fired" (`process_error`), safe (fail closed) but imprecise about why.
 - `hooks.json` files inside a `read_roots` root: measured on agy 1.1.27 (M10), agy loads them from every `--add-dir`, and a foreign deny runs ahead of our gate. `agy_start` therefore refuses a read root that carries `.agents/hooks.json` (`ValidationError`, field `read_roots`). Whether a foreign `overwrite` could merge over ours is still unmeasured, which is why the refusal is unconditional.
 
+## Which agy version this was measured against
+
+The behaviour above was measured on agy 1.1.24–1.1.27. The `PreToolUse`
+contract was re-checked against **1.2.1** (2026-09-14) by reading the hook
+documentation the CLI carries in its own binary, and every field the gate
+depends on is unchanged: `toolCall.name`, `toolCall.args` (including
+`CommandLine`), `stepIdx` and the common `conversationId` / `workspacePaths`,
+camelCase throughout; `decision` still takes `allow` / `deny` / `ask` /
+`force_ask`, with `deny` documented as a hard block; `reason`,
+`permissionOverrides` and `overwrite` are all still there, and `overwrite` is
+still the shallow top-level merge the gate relies on for `Cwd` and
+`BypassSandbox`.
+
+Two things are worth knowing about 1.2.1 specifically.
+
+A rewritten tool call is now announced: when `overwrite` changes an argument,
+the tool result is prefixed with a notice naming the keys that changed. The
+gate sets `Cwd` and `BypassSandbox` on every allowed `run_command`, so on
+1.2.1 the model sees that notice on every allowed command. Nothing in the
+broker parses tool output positionally, so this is noise to the model, not a
+behaviour change for us.
+
+What has *not* been re-measured is the failure semantics: that empty output,
+non-JSON output, or a non-zero exit from the hook is a **denial** rather than
+a pass-through. That was measured on 1.1.23 and is not documented by agy in
+either version, so it cannot be confirmed by reading. It is the assumption a
+version bump is most likely to invalidate, and only a live run can settle it.
+Until then the runtime watchdog (`src/runner/gate-watchdog.ts`) is the
+backstop: a job whose gate has not logged a verdict within three seconds is
+killed, and the broker reports `process_error`. That covers a gate that never
+runs. It does not cover a gate that runs, answers `deny`, and is ignored —
+so treat a live run on a new agy minor version as the thing that clears it.
+
 ## `verify_command`
 
 A command the **runner** — not agy, not the model — runs once after agy exits 0, against the final workspace tree. Outside the model's own decisions: cannot be skipped, reordered, or narrowed from inside the job. Not sandboxed and not a security boundary — it runs unsandboxed, as the user, at exactly the trust level of the parent agent running the same command itself.

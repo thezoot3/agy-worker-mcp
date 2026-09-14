@@ -56,7 +56,8 @@ separate from `agy`'s self-report (`agent_report`). Read `outcome` and
 - Node.js ≥ 22.5, installed with a version manager. A root-owned global prefix
   (the official `.pkg` installs into `/usr/local`) makes `npm install -g` fail
   with `EACCES`.
-- The `agy` CLI on `PATH` (developed and measured against agy 1.1.24–1.1.27).
+- The `agy` CLI on `PATH` (developed and measured against agy 1.1.24–1.1.27;
+  the hook contract re-checked against 1.2.1 — see docs/permissions.md).
   `agy_capabilities` tells you whether the server can find it.
 
 ## Install
