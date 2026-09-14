@@ -173,6 +173,14 @@ export const NETWORK_BLOCK_SIGNATURES: readonly string[] = [
  * the gate never saw the call. Matching them only changes how the warning is
  * worded, never the outcome (they arrive as ordinary `state: 'ERROR'` tool
  * steps, which `decideOutcome` deliberately does not count as blocks).
+ *
+ * Kept lower-case and matched case-insensitively (`isAgyEngineRefusal`). agy
+ * 1.2.1 carries "user denied permission to run command" capitalised as well,
+ * as the leading word of a wrapped error. Missing it would not change any
+ * outcome, but it would file the one event that says agy's own engine is still
+ * live under "failed for a reason we do not recognise" — and that event is how
+ * a regression in `--dangerously-skip-permissions` or in the hook wiring would
+ * announce itself.
  */
 export const AGY_ENGINE_REFUSAL_SIGNATURES: readonly string[] = [
   'user denied permission to run command',

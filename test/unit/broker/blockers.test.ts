@@ -79,6 +79,14 @@ describe('isAgyEngineRefusal', () => {
     ).toBe(true)
   })
 
+  it('returns true when agy capitalises the refusal, as 1.2.1 does', () => {
+    expect(
+      isAgyEngineRefusal(
+        'run step: User denied permission to run command:\nls -la /tmp',
+      ),
+    ).toBe(true)
+  })
+
   it('returns false for gate hook refusal messages', () => {
     expect(
       isAgyEngineRefusal(

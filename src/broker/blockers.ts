@@ -64,7 +64,8 @@ const LABEL: Record<BlockerSource, string> = {
  * field saying who refused.
  */
 export function isAgyEngineRefusal(message: string): boolean {
-  return AGY_ENGINE_REFUSAL_SIGNATURES.some((sig) => message.includes(sig))
+  const haystack = message.toLowerCase()
+  return AGY_ENGINE_REFUSAL_SIGNATURES.some((sig) => haystack.includes(sig))
 }
 
 function asDetail(value: unknown): Record<string, unknown> {
